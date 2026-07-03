@@ -140,17 +140,22 @@ Jaicode **不限制 AI 大模型来源**，开放接入任意兼容 API：
 
 ```
 jaicode/
-├── .jaicode/              # 项目级配置
+├── .jaicode/              # 项目级运行时配置
 │   ├── project.yaml       # 项目特定配置
-│   └── agents/            # 项目级自定义 Agent
-├── .kilo/                 # Kilo 配置目录
-│   ├── agent/             # Agent 定义
-│   ├── command/           # 自定义命令
-│   └── skill/             # 技能包
-├── prd/                   # 产品需求文档归档
-├── src/                   # 源代码
-├── docs/                  # 开发文档
-└── tests/                 # 测试文件
+│   └── user.profile       # 用户画像与偏好
+├── .jai/                  # Agent 与命令定义
+│   ├── agent/             # Agent 模式定义
+│   └── command/           # 自定义命令
+├── packages/              # 源代码
+│   ├── cli/               # CLI 入口 + Agent 模式
+│   ├── core/              # 基础设施模块
+│   ├── llm/               # LLM Provider 适配
+│   ├── i18n/              # 国际化引擎
+│   └── marketplace/       # 扩展市场
+├── prd/                   # 产品需求文档
+├── README.md
+├── jaicode.json          # 项目配置
+└── tsconfig.json
 ```
 
 ---
