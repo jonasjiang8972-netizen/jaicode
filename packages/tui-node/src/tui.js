@@ -97,6 +97,63 @@ function classifyIntent(input) {
   return 'code'
 }
 
+async function validateAPIKey(providerCfg) {
+  try {
+    const apiKey = providerCfg.apiKey
+    const baseURL = providerCfg.baseURL || ''
+    const apiFormat = providerCfg.apiFormat || 'anthropic'
+    const model = providerCfg.model || 'claude-sonnet-4-20250514'
+
+    let url, headers, body
+    const messages = [{ role: 'user', content: 'hi' }]
+
+    if (apiFormat === 'anthropic') {
+      url = baseURL || 'https://api.anthropic.com/v1/messages'
+      headers = {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      }
+      body = {
+        model,
+        max_tokens: 10,
+        messages,
+        system: 'Reply with one word.',
+      }
+    } else {
+      // OpenAI format
+      url = baseURL || 'https://api.openai.com/v1/chat/completions'
+      headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      }
+      body = {
+        model,
+        max_tokens: 10,
+        messages: [{ role: 'system', content: 'Reply with one word.' }, ...messages],
+      }
+    }
+
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    })
+
+    if (resp.ok) return { success: true }
+
+    const text = await resp.text()
+    let errMsg = `HTTP ${resp.status}`
+    try {
+      const json = JSON.parse(text)
+      errMsg = json.error?.message || json.message || errMsg
+    } catch {}
+    return { success: false, error: errMsg }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+}
+
 // ─── Rendering ─────────────────────────────────────────
 function renderStartup() {
   clearScreen()
@@ -113,17 +170,18 @@ function renderStartup() {
 
   // Provider status
   const cfg = loadConfig()
-  const providerCfg = cfg.providers?.[cfg.defaultProvider]
+  const { name: providerName, cfg: providerCfg, endpoint } = getProviderConfig(cfg)
   if (providerCfg?.apiKey) {
-    state.provider = cfg.defaultProvider
-    state.model = providerCfg.model || 'claude-sonnet-4-20250514'
-    stdout.write(c.dim('   Provider: ') + c.green(`✓ ${cfg.defaultProvider}`) +
-                c.dim(` (${state.model})`) + '\n')
+    state.provider = providerName
+    state.model = providerCfg.model || providerCfg.defaultModel || 'claude-sonnet-4-20250514'
+    const baseInfo = providerCfg.baseURL ? c.dim(` → ${providerCfg.baseURL.slice(0, 40)}...`) : ''
+    stdout.write(c.dim('   Provider: ') + c.green(`✓ ${providerName}`) +
+                c.dim(` (${state.model})`) + baseInfo + '\n')
   } else {
     stdout.write(c.dim('   Provider: ') + c.red('✗ Not configured') + '\n')
     stdout.write(c.yellow('\n   ⚠ No API Key found. You can add it via:\n'))
-    stdout.write(c.dim('     jaicode config --provider anthropic --api-key sk-xxx\n'))
-    stdout.write(c.dim('     Or set ANTHROPIC_API_KEY environment variable.\n'))
+    stdout.write(c.dim('     运行 `jaicode` 启动引导配置\n'))
+    stdout.write(c.dim('     或设置 ANTHROPIC_API_KEY / OPENAI_API_KEY 环境变量\n'))
   }
 
   stdout.write(c.dim('\n   ' + '─'.repeat(50) + '\n'))
@@ -189,16 +247,34 @@ function renderSpinner(text) {
   }, 80)
 }
 
+// ─── API Endpoint Registry ─────────────────────────────
+const API_ENDPOINTS = {
+  anthropic: { url: 'https://api.anthropic.com/v1/messages', auth: 'x-api-key', apiVersion: '2023-06-01', apiFormat: 'anthropic' },
+  openai: { url: 'https://api.openai.com/v1/chat/completions', auth: 'bearer', apiFormat: 'openai' },
+}
+
+function getProviderConfig(cfg) {
+  const name = cfg.defaultProvider || 'anthropic'
+  const providerCfg = cfg.providers?.[name] || {}
+  const endpoint = API_ENDPOINTS[name] || {
+    url: providerCfg.baseURL || 'https://api.openai.com/v1/chat/completions',
+    auth: providerCfg.baseURL ? 'bearer' : 'x-api-key',
+    apiFormat: providerCfg.apiFormat || (providerCfg.baseURL ? 'openai' : 'anthropic'),
+  }
+  return { name, cfg: providerCfg, endpoint }
+}
+
 // ─── LLM API ───────────────────────────────────────────
 async function callLLM(messages) {
   const cfg = loadConfig()
-  const providerCfg = cfg.providers?.[cfg.defaultProvider]
+  const { name: providerName, cfg: providerCfg, endpoint } = getProviderConfig(cfg)
+
   if (!providerCfg?.apiKey) {
     return { error: t('未配置 API Key', 'No API Key configured') }
   }
 
   const apiKey = providerCfg.apiKey
-  const model = providerCfg.model || 'claude-sonnet-4-20250514'
+  const model = providerCfg.model || providerCfg.defaultModel || 'claude-sonnet-4-20250514'
 
   const modePrompts = {
     plan: t('你是一个架构设计专家。生成架构决策记录（ADR）。',
@@ -213,53 +289,62 @@ async function callLLM(messages) {
 
   const systemPrompt = `${modePrompts[state.mode] || modePrompts.code}
 ${state.lang === 'zh' ? '用中文回复。' : 'Reply in English.'}
-当前项目: ${detectProject().name}
-项目路径: ${state.cwd}`
+Project: ${detectProject().name}`
 
+  // OpenAI format (default for custom endpoints)
   const body = {
     model,
     max_tokens: 4096,
     stream: true,
-    system: systemPrompt,
-    messages: messages
-      .filter(m => m.role !== 'system')
-      .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })),
+    messages: [
+      { role: 'system', content: systemPrompt },
+      ...messages
+        .filter(m => m.role !== 'system')
+        .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })),
+    ],
   }
 
-  const isAnthropic = cfg.defaultProvider !== 'openai'
-  const url = isAnthropic ? 'https://api.anthropic.com/v1/messages' : 'https://api.openai.com/v1/chat/completions'
-
   const headers = { 'Content-Type': 'application/json' }
-  if (isAnthropic) {
+  if (endpoint.auth === 'bearer') {
+    headers['Authorization'] = `Bearer ${apiKey}`
+  } else {
+    // Anthropic format
     headers['x-api-key'] = apiKey
-    headers['anthropic-version'] = '2023-06-01'
+    headers['anthropic-version'] = endpoint.apiVersion || '2023-06-01'
+    // Convert to Anthropic format
     delete body.system
     body.messages = [
       { role: 'user', content: systemPrompt },
-      ...body.messages
+      ...messages
+        .filter(m => m.role !== 'system')
+        .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })),
     ]
-  } else {
-    headers['Authorization'] = `Bearer ${apiKey}`
   }
 
-  const resp = await fetch(url, {
+  const resp = await fetch(endpoint.url, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
   })
 
   if (!resp.ok) {
-    const err = await resp.text()
-    return { error: `API ${cfg.defaultProvider} error: ${resp.status}` }
+    const errText = await resp.text()
+    let errMsg = `HTTP ${resp.status}`
+    try {
+      const errJson = JSON.parse(errText)
+      errMsg = errJson.error?.message || errJson.message || errMsg
+    } catch { /* use default */ }
+    return { error: `${providerName}: ${errMsg}`, status: resp.status }
   }
 
-  return { stream: resp.body }
+  return { stream: resp.body, apiFormat: endpoint.apiFormat }
 }
 
-async function streamResponse(stream) {
-  const reader = stream.getReader()
+async function streamResponse(streamRes) {
+  const reader = streamRes.stream.getReader()
   const decoder = new TextDecoder()
   let response = ''
+  const isAnthropic = streamRes.apiFormat === 'anthropic'
 
   while (true) {
     const { done, value } = await reader.read()
@@ -275,16 +360,23 @@ async function streamResponse(stream) {
         try {
           const json = JSON.parse(data)
           let content
-          if (json.choices) {
-            content = json.choices[0]?.delta?.content
-          } else if (json.type === 'content_block_delta') {
-            content = json.delta?.text
+          if (isAnthropic) {
+            // Anthropic SSE: event: content_block_delta, data: {"type":"content_block_delta","delta":{"text":"..."}}
+            if (json.type === 'content_block_delta') {
+              content = json.delta?.text
+            }
+          } else {
+            // OpenAI SSE: data: {"choices":[{"delta":{"content":"..."}}]}
+            content = json.choices?.[0]?.delta?.content
           }
           if (content) {
             response += content
             process.stdout.write(content)
           }
         } catch { /* skip */ }
+      } else if (isAnthropic && line.startsWith('event: ')) {
+        // Anthropic event marker, skip
+        continue
       }
     }
   }
@@ -376,7 +468,7 @@ async function processMessage(userInput) {
       })
     } else if (result.stream) {
       stdout.write(`${c.accent('⬡')} ${c.bold('Jaicode')} ${c.dim(new Date().toLocaleTimeString())}\n  `)
-      const response = await streamResponse(result.stream)
+      const response = await streamResponse(result)
       state.messages.push({
         role: 'assistant',
         content: response,
@@ -401,57 +493,92 @@ async function processMessage(userInput) {
 async function main() {
   // Check API key if not configured
   const cfg = loadConfig()
-  if (!cfg.providers?.anthropic?.apiKey && !process.env.ANTHROPIC_API_KEY) {
+  const hasAnyKey = Object.values(cfg.providers || {}).some(p => p.apiKey) ||
+                     process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY
+
+  if (!hasAnyKey) {
     clearScreen()
-    stdout.write(c.yellow.bold('\n  ⚠ No API Key configured\n\n'))
-    stdout.write(c.dim('  请选择你的 LLM Provider:\n\n'))
+    stdout.write(c.yellow.bold('\n  ⚠ 未检测到 API Key\n\n'))
+    stdout.write(c.dim('  选择你的 LLM Provider:\n\n'))
 
     const providers = [
-      { key: '1', name: 'Anthropic (Claude)', prefix: 'sk-ant-', url: 'https://console.anthropic.com/settings/keys', model: 'claude-sonnet-4-20250514' },
-      { key: '2', name: 'OpenAI (GPT-4o)', prefix: 'sk-', url: 'https://platform.openai.com/api-keys', model: 'gpt-4o' },
-      { key: '3', name: 'DeepSeek', prefix: 'sk-', url: 'https://platform.deepseek.com/api_keys', model: 'deepseek-chat' },
-      { key: '4', name: '其他兼容 API', prefix: '', url: '', model: 'claude-sonnet-4-20250514' },
+      { key: '1', name: 'Anthropic', label: 'Claude 官方', url: 'https://console.anthropic.com/settings/keys', model: 'claude-sonnet-4-20250514', apiFormat: 'anthropic', baseURL: 'https://api.anthropic.com/v1/messages' },
+      { key: '2', name: 'OpenAI', label: 'GPT 官方', url: 'https://platform.openai.com/api-keys', model: 'gpt-4o', apiFormat: 'openai', baseURL: 'https://api.openai.com/v1/chat/completions' },
+      { key: '3', name: '中转/第三方', label: 'OpenAI 兼容', url: '', model: 'gpt-4o', apiFormat: 'openai', baseURL: '' },
     ]
 
     providers.forEach(p => {
-      stdout.write(c.dim(`    [${p.key}] ${p.name}\n`))
+      stdout.write(c.dim(`    [${p.key}] ${p.name} — ${p.label}\n`))
     })
 
     stdout.write('\n')
-    const choice = await getInput(c.primary('  选择 (1-4): '))
+    const choice = await getInput(c.primary('  选择 (1-3): '))
     const selected = providers.find(p => p.key === choice) || providers[0]
 
-    if (selected.url) {
-      stdout.write(c.dim(`\n  获取 API Key: ${selected.url}\n`))
+    // Ask for custom base URL if third-party
+    let baseURL = selected.baseURL
+    let model = selected.model
+    let apiFormat = selected.apiFormat
+
+    if (selected.key === '3') {
+      baseURL = await getInput(c.primary('\n  输入中转 API 地址 (如 https://xxx.com/v1/chat/completions):\n  > '))
+      if (!baseURL) {
+        stdout.write(c.red('  ✗ 必须提供 API 地址\n\n'))
+        process.exit(1)
+      }
+      // Ask model name
+      model = await getInput(c.primary('  输入模型名称 (如 gpt-4o/claude-3.5-sonnet): ')) || 'gpt-4o'
+      apiFormat = 'openAI-compatible'
+      stdout.write(c.dim(`  ✓ 中转地址: ${baseURL}\n`))
+      stdout.write(c.dim(`  ✓ 模型: ${model}\n`))
+    } else if (selected.url) {
+      stdout.write(c.dim(`\n  获取 Key: ${selected.url}\n`))
     }
 
     const key = await getInput(c.primary(`\n  输入 ${selected.name} API Key: `))
-
-    if (!key || key.length < 10) {
+    if (!key || key.length < 5) {
       stdout.write(c.red('  ✗ 无效的 Key\n\n'))
       process.exit(1)
     }
 
-    if (selected.key === '2' || selected.key === '3') {
-      // OpenAI / DeepSeek
-      const cfg2 = loadConfig()
-      cfg2.providers[selected.key === '2' ? 'openai' : selected.key === '3' ? 'deepseek' : 'openai'] = {
-        model: selected.model,
-        apiKey: key,
-        enabled: true,
-      }
-      cfg2.defaultProvider = selected.key === '2' ? 'openai' : 'deepseek'
-      const dir = path.join(os.homedir(), '.jaicode')
-      fs.mkdirSync(dir, { recursive: true })
-      fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(cfg2, null, 2))
-      stdout.write(c.green(`\n  ✓ ${selected.name} API Key 已保存\n\n`))
-    } else {
-      // Anthropic or other (treat as Anthropic-compatible)
-      saveAPIKey(key)
-      stdout.write(c.green(`\n  ✓ ${selected.name} API Key 已保存\n\n`))
+    // Build config
+    const dir = path.join(os.homedir(), '.jaicode')
+    fs.mkdirSync(dir, { recursive: true })
+    const configPath = path.join(dir, 'config.json')
+
+    // Determine provider key name
+    const providerKey = selected.key === '1' ? 'anthropic' : selected.key === '2' ? 'openai' : 'custom'
+
+    const newCfg = {
+      version: 1,
+      language: state.lang,
+      providers: {
+        ...(cfg.providers || {}),
+        [providerKey]: {
+          model,
+          apiKey: key,
+          enabled: true,
+          baseURL: baseURL || undefined,
+          apiFormat: apiFormat,
+        },
+      },
+      defaultProvider: providerKey,
+      agent: { maxRetries: 5 },
+      tips: { enabled: true, triggerCount: 10 },
     }
 
-    // Small delay then reload config
+    // Validate API key before saving
+    stdout.write(c.dim('\n  正在验证 API Key...'))
+    const valid = await validateAPIKey(newCfg.providers[providerKey])
+    if (!valid.success) {
+      stdout.write(c.red(`\n  ✗ 验证失败: ${valid.error}\n`))
+      stdout.write(c.dim('  请检查 Key 和 API 地址是否正确。\n\n'))
+      process.exit(1)
+    }
+
+    fs.writeFileSync(configPath, JSON.stringify(newCfg, null, 2))
+    stdout.write(c.green(`\n  ✓ API Key 验证成功！已保存为 "${providerKey}"\n\n`))
+
     await new Promise(r => setTimeout(r, 800))
   }
 
