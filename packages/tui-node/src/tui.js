@@ -15,6 +15,9 @@ import chalk from 'chalk'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+// ─── Version ───────────────────────────────────────────
+const VERSION = '0.1.1'
+
 // ─── Theme ─────────────────────────────────────────────
 const c = {
   primary: chalk.hex('#00B8D9'),
@@ -190,7 +193,7 @@ function renderStartup() {
 
 function renderMessages() {
   if (state.messages.length === 0) {
-    stdout.write(c.dim(`   ${t('💬 开始对话吧！例如:', '💬 Start a conversation:')}\n`))
+    stdout.write(c.dim(`   ${t('开始对话吧！例如:', 'Start a conversation:')}\n`))
     stdout.write(c.dim('     "修复登录接口的 bug"\n'))
     stdout.write(c.dim('     "解释这段代码做了什么"\n'))
     stdout.write(c.dim('     "设计用户认证模块架构"\n\n'))
@@ -525,9 +528,24 @@ async function processMessage(userInput) {
     // Stream response
     if (result.stream || result.body) {
       const streamResult = result.stream ? result : { stream: result.body, apiFormat: result.apiFormat }
-      // We'll update thinking as we receive chunks
-      stdout.write(`${c.accent('⬡')} ${c.bold('Jaicode')} ${c.dim(new Date().toLocaleTimeString())}\n  `)
+
+      // Print response header
+      process.stdout.write(`${c.accent('⬡')} ${c.bold('Jaicode')} ${c.dim(new Date().toLocaleTimeString())}\n  `)
+
+      // Start async thinking redraw during streaming
+      const redrawTimer = setInterval(() => {
+        // Move cursor up and redraw thinking area to show live updates
+        if (state.messages[thinkingIdx]) {
+          const content = state.messages[thinkingIdx].content
+          const lastLine = content.split('\n').pop()
+          if (lastLine && lastLine.includes('[')) {
+            process.stdout.write(`\r  ${c.dim(lastLine.slice(-60))}`)
+          }
+        }
+      }, 200)
+
       const response = await streamResponse(streamResult)
+      clearInterval(redrawTimer)
 
       if (!response || response.trim().length === 0) {
         thinking.push(`[${t('响应为空', 'Empty')}] ${t('对方返回空内容', 'Empty response received')}`)
