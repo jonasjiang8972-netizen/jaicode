@@ -1,0 +1,26 @@
+{
+  "name": "@jaicode/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "jaicode": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build": "bun build --compile --outfile=dist/jaicode src/index.ts",
+    "typecheck": "bunx tsgo --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@jaicode/core": "*",
+    "@jaicode/llm": "*",
+    "@jaicode/i18n": "*",
+    "@jaicode/marketplace": "*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}

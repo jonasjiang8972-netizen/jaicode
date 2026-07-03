@@ -1,0 +1,8 @@
+{
+  "name": "learn",
+  "description": "Extract non-obvious learnings from the session into the project config",
+  "version": "1.0.0",
+  "author": "jaicode",
+  "type": "command",
+  "allowedTools": ["Read", "Edit", "Glob", "Grep"]
+}

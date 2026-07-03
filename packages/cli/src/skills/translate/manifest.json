@@ -1,0 +1,8 @@
+{
+  "name": "translate",
+  "description": "Translate English documentation and UI copy to other languages",
+  "version": "1.0.0",
+  "author": "jaicode",
+  "type": "command",
+  "allowedTools": ["Read", "Edit", "Grep", "Glob", "Bash(git diff *)"]
+}

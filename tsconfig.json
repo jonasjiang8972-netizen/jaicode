@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "paths": {
+      "@jaicode/core": ["./packages/core/src"],
+      "@jaicode/llm": ["./packages/llm/src"],
+      "@jaicode/i18n": ["./packages/i18n/src"],
+      "@jaicode/marketplace": ["./packages/marketplace/src"]
+    },
+    "baseUrl": "."
+  },
+  "include": ["packages/*/src/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

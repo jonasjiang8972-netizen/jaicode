@@ -1,0 +1,8 @@
+{
+  "name": "spellcheck",
+  "description": "Check Markdown files for spelling and grammar errors",
+  "version": "1.0.0",
+  "author": "jaicode",
+  "type": "command",
+  "allowedTools": ["Read", "Grep", "Glob"]
+}

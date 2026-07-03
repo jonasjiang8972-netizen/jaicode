@@ -1,0 +1,8 @@
+{
+  "name": "rmslop",
+  "description": "Remove AI-generated code slop from the current diff",
+  "version": "1.0.0",
+  "author": "jaicode",
+  "type": "command",
+  "allowedTools": ["Read", "Edit", "Bash(git diff *)"]
+}

@@ -1,0 +1,29 @@
+{
+  "name": "@jaicode/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./logger": "./src/logger.ts",
+    "./storage": "./src/storage.ts",
+    "./crypto": "./src/crypto.ts",
+    "./config": "./src/config.ts",
+    "./error": "./src/error.ts",
+    "./user-profile": "./src/user-profile.ts",
+    "./project-config": "./src/project-config.ts",
+    "./command-parser": "./src/command-parser.ts",
+    "./diff": "./src/diff.ts",
+    "./filesystem": "./src/filesystem.ts",
+    "./sandbox": "./src/sandbox.ts"
+  },
+  "scripts": {
+    "typecheck": "bunx tsgo --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}

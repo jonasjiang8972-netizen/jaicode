@@ -1,0 +1,8 @@
+{
+  "name": "code-review",
+  "description": "Review code changes for bugs, security, style, and best practices",
+  "version": "1.0.0",
+  "author": "jaicode",
+  "type": "command",
+  "allowedTools": ["Read", "Grep", "Glob", "Bash(git diff *)", "Bash(git log *)", "Bash(git status *)"]
+}

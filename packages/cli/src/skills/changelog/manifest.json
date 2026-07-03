@@ -1,0 +1,8 @@
+{
+  "name": "changelog",
+  "description": "Generate a structured changelog from commit history",
+  "version": "1.0.0",
+  "author": "jaicode",
+  "type": "command",
+  "allowedTools": ["Bash(git log *)", "Bash(git show *)", "Bash(git diff *)"]
+}

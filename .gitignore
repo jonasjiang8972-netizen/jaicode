@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+bun.lock
+
+# Build
+dist/
+*.tsbuildinfo
+
+# Jaicode runtime
+.jaicode/
+.jaicode_backup/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Reference repo (read-only)
+.kilo/kilocode-ref/

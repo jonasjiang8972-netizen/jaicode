@@ -1,0 +1,8 @@
+{
+  "name": "issues",
+  "description": "Search GitHub for existing issues matching a query",
+  "version": "1.0.0",
+  "author": "jaicode",
+  "type": "command",
+  "allowedTools": ["Bash(gh *)"]
+}

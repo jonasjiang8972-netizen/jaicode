@@ -1,0 +1,8 @@
+{
+  "name": "commit",
+  "description": "Git commit with semantic prefix and bilingual message",
+  "version": "1.0.0",
+  "author": "jaicode",
+  "type": "command",
+  "allowedTools": ["Bash(git *)"]
+}
