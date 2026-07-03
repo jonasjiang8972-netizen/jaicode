@@ -559,10 +559,18 @@ async function main() {
     stdout.write(c.yellow.bold('\n  ⚠ 未检测到 API Key\n\n'))
     stdout.write(c.dim('  选择你的 LLM Provider:\n\n'))
 
+    // Preset provider configs (auto-fill URL and model)
+    const presets = {
+      '4': { name: 'LongCat', model: 'LongCat-2.0', apiFormat: 'openai', baseURL: 'https://api.longcat.chat/openai/v1/chat/completions', url: 'https://longcat.chat/platform/api_keys' },
+      '5': { name: 'DeepSeek', model: 'deepseek-chat', apiFormat: 'openai', baseURL: 'https://api.deepseek.com/v1/chat/completions', url: 'https://platform.deepseek.com/api_keys' },
+      '6': { name: '智谱 GLM', model: 'glm-4-flash', apiFormat: 'openai', baseURL: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', url: 'https://open.bigmodel.cn/usercenter/apikeys' },
+    }
+
     const providers = [
       { key: '1', name: 'Anthropic', label: 'Claude 官方', url: 'https://console.anthropic.com/settings/keys', model: 'claude-sonnet-4-20250514', apiFormat: 'anthropic', baseURL: 'https://api.anthropic.com/v1/messages' },
       { key: '2', name: 'OpenAI', label: 'GPT 官方', url: 'https://platform.openai.com/api-keys', model: 'gpt-4o', apiFormat: 'openai', baseURL: 'https://api.openai.com/v1/chat/completions' },
-      { key: '3', name: '中转/第三方', label: 'OpenAI 兼容', url: '', model: 'gpt-4o', apiFormat: 'openai', baseURL: '' },
+      { key: '3', name: 'LongCat', label: '美团 · LongCat-2.0', url: 'https://longcat.chat/platform/api_keys', model: 'LongCat-2.0', apiFormat: 'openai', baseURL: 'https://api.longcat.chat/openai/v1/chat/completions' },
+      { key: '4', name: '其他中转', label: 'OpenAI 兼容', url: '', model: 'gpt-4o', apiFormat: 'openai', baseURL: '' },
     ]
 
     providers.forEach(p => {
@@ -578,7 +586,7 @@ async function main() {
     let model = selected.model
     let apiFormat = selected.apiFormat
 
-    if (selected.key === '3') {
+    if (selected.key === '4') {
       baseURL = await getInput(c.primary('\n  输入中转 API 地址 (如 https://xxx.com/v1 或 .../openai):\n  > '))
       if (!baseURL) {
         stdout.write(c.red('  ✗ 必须提供 API 地址\n\n'))
@@ -586,12 +594,8 @@ async function main() {
       }
       // Auto-append /chat/completions if path looks incomplete
       if (!baseURL.includes('/chat/completions')) {
-        if (baseURL.endsWith('/')) {
-          baseURL = baseURL + 'chat/completions'
-        } else {
-          baseURL = baseURL + '/chat/completions'
-        }
-        stdout.write(c.dim(`  → 补全路径: ${baseURL}\n`))
+        baseURL = baseURL.replace(/\/+$/, '') + '/chat/completions'
+        stdout.write(c.dim(`  → 路径补全: ${baseURL}\n`))
       }
       model = await getInput(c.primary('  输入模型名称: ')) || 'gpt-4o'
       apiFormat = 'openai'
