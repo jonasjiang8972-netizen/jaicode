@@ -202,6 +202,14 @@ function renderMessages() {
     if (msg.role === 'user') {
       stdout.write(`${c.primary('❯')} ${c.bold(t('You', '你'))} ${time}\n`)
       stdout.write(`  ${msg.content}\n\n`)
+    } else if (msg.role === 'thinking') {
+      // 思考过程 - 折叠展示
+      stdout.write(`${c.yellow('⚙')} ${c.dim(t('思考过程', 'Thinking'))} ${time}\n`)
+      const lines = msg.content.split('\n')
+      lines.forEach(line => {
+        stdout.write(c.dim(`  │ ${line}\n`))
+      })
+      stdout.write('\n')
     } else if (msg.role === 'assistant') {
       stdout.write(`${c.accent('⬡')} ${c.bold('Jaicode')} ${time}`)
       if (msg.processingTime) stdout.write(c.dim(` (${msg.processingTime}ms)`))
@@ -305,14 +313,16 @@ Project: ${detectProject().name}`
   }
 
   const headers = { 'Content-Type': 'application/json' }
-  if (endpoint.auth === 'bearer') {
+  const isAnthropic = endpoint.apiFormat === 'anthropic'
+
+  if (!isAnthropic) {
+    // OpenAI format (includes openAI-compatible)
     headers['Authorization'] = `Bearer ${apiKey}`
   } else {
     // Anthropic format
     headers['x-api-key'] = apiKey
     headers['anthropic-version'] = endpoint.apiVersion || '2023-06-01'
-    // Convert to Anthropic format
-    delete body.system
+    // Convert to Anthropic format: move system to first user message
     body.messages = [
       { role: 'user', content: systemPrompt },
       ...messages
@@ -434,6 +444,7 @@ async function getRawInput(prompt) {
 // ─── Main Loop ─────────────────────────────────────────
 async function processMessage(userInput) {
   const startTime = Date.now()
+  const thinking = []
 
   // Add user message
   state.messages.push({
@@ -444,47 +455,92 @@ async function processMessage(userInput) {
 
   // Auto-classify intent
   const intent = state.mode === 'auto' ? classifyIntent(userInput) : state.mode
+  thinking.push(`[${t('意图识别', 'Intent')}] ${intent.toUpperCase()}`)
 
-  // Show processing
+  // Show thinking
   state.isProcessing = true
-  const spinner = renderSpinner(c.dim(
-    intent === 'ask' ? t('思考中...', 'Thinking...') :
-    intent === 'plan' ? t('设计方案中...', 'Designing...') :
-    intent === 'debug' ? t('分析问题中...', 'Analyzing...') :
-    t('处理中...', 'Processing...')
-  ))
+  state.messages.push({
+    role: 'thinking',
+    content: thinking.join('\n'),
+    timestamp: Date.now(),
+  })
+  const thinkingIdx = state.messages.length - 1
 
   try {
-    const result = await callLLM(state.messages)
-    clearInterval(spinner)
-    stdout.write('\r  ' + ' '.repeat(50) + '\r')
+    // Load config (thinking step)
+    const cfg = loadConfig()
+    const { name: providerName, cfg: providerCfg, endpoint } = getProviderConfig(cfg)
+
+    if (!providerCfg?.apiKey) {
+      state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') + `\n[${t('错误', 'Error')}] ${t('未配置 API Key', 'No API Key}')` }
+      state.messages.push({ role: 'assistant', content: `❌ ${t('未配置 API Key', 'No API Key configured')}`, timestamp: Date.now() })
+      state.isProcessing = false
+      return
+    }
+
+    thinking.push(`[${t('Provider', '服务')}] ${providerName}`)
+    thinking.push(`[${t('模型', 'Model')}] ${providerCfg.model || 'default'}`)
+    if (providerCfg.baseURL) thinking.push(`[${t('API地址', 'Endpoint')}] ${providerCfg.baseURL}`)
+    state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
+
+    // Build messages
+    thinking.push(`[${t('构建请求', 'Request')}] ${t('组装历史消息和系统提示', 'Building messages + system prompt')}...`)
+    state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
+
+    const modePrompts = {
+      plan: t('你是一个架构设计专家。', 'Architecture design expert.'),
+      code: t('你是一个编程助手。', 'Coding assistant.'),
+      debug: t('你是一个调试助手。', 'Debugging assistant.'),
+      ask: t('你是一个简洁的问答助手。', 'Q&A assistant.'),
+    }
+    const langNote = state.lang === 'zh' ? '用中文回复。' : 'Reply in English.'
+
+    const messages = [
+      { role: 'system', content: `${modePrompts[intent] || modePrompts.code} ${langNote}\nProject: ${detectProject().name}` },
+      ...state.messages
+        .filter(m => m.role === 'user' || m.role === 'assistant')
+        .map(m => ({ role: m.role, content: m.content })),
+      { role: 'user', content: userInput },
+    ]
+
+    // Call API
+    thinking.push(`[${t('连接中', 'Connecting')}] ${t('正在连接 API...', 'Connecting to API...')}`)
+    state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
+
+    const result = await callLLM(messages)
 
     if (result.error) {
-      state.messages.push({
-        role: 'assistant',
-        content: `❌ ${result.error}`,
-        timestamp: Date.now(),
-        processingTime: Date.now() - startTime,
-      })
-    } else if (result.stream) {
+      thinking.push(`[${t('错误', 'Error')}] ${result.error}`)
+      state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
+      state.messages.push({ role: 'assistant', content: `❌ ${result.error}`, timestamp: Date.now(), processingTime: Date.now() - startTime })
+      state.isProcessing = false
+      return
+    }
+
+    thinking.push(`[${t('已连接', 'Connected')}] ${t('开始接收响应...', 'Receiving response...')}`)
+    state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
+
+    // Stream response
+    if (result.stream || result.body) {
+      const streamResult = result.stream ? result : { stream: result.body, apiFormat: result.apiFormat }
+      // We'll update thinking as we receive chunks
       stdout.write(`${c.accent('⬡')} ${c.bold('Jaicode')} ${c.dim(new Date().toLocaleTimeString())}\n  `)
-      const streamResult = result
       const response = await streamResponse(streamResult)
+
       if (!response || response.trim().length === 0) {
-        state.messages.push({ role: 'assistant', content: `⚠️ ${t('模型返回空内容，可能原因：\n  1. API Key 余额不足或配额用尽\n  2. 模型名称不正确\n  3. 服务商拒绝了请求\n\n请尝试 /config 检查配置，或更换 Provider。', 'Model returned empty response. Possible causes:\n  1. API key has no quota/balance\n  2. Incorrect model name\n  3. Service provider rejected request\n\nTry /config to check settings, or switch provider.')}`, timestamp: Date.now(), processingTime: Date.now() - startTime })
-        continue
+        thinking.push(`[${t('响应为空', 'Empty')}] ${t('对方返回空内容', 'Empty response received')}`)
+        state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
+        state.messages.push({ role: 'assistant', content: `⚠️ ${t('模型返回空内容，请检查 API Key 或模型名称', 'Model returned empty response. Check API key or model.')}`, timestamp: Date.now(), processingTime: Date.now() - startTime })
+      } else {
+        thinking.push(`[${t('完成', 'Done')}] ${t('响应长度', 'Response')}: ${response.length} ${t('字符', 'chars')}`)
+        state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
+        state.messages.push({ role: 'assistant', content: response, timestamp: Date.now(), processingTime: Date.now() - startTime })
       }
-      state.messages.push({ role: 'assistant', content: response, timestamp: Date.now(), processingTime: Date.now() - startTime })
     }
   } catch (e) {
-    clearInterval(spinner)
-    stdout.write('\r  ' + ' '.repeat(50) + '\r')
-    state.messages.push({
-      role: 'assistant',
-      content: `❌ ${e.message}`,
-      timestamp: Date.now(),
-      processingTime: Date.now() - startTime,
-    })
+    thinking.push(`[${t('异常', 'Exception')}] ${e.message}`)
+    state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
+    state.messages.push({ role: 'assistant', content: `❌ ${e.message}`, timestamp: Date.now(), processingTime: Date.now() - startTime })
   }
 
   state.isProcessing = false
