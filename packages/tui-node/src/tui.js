@@ -468,13 +468,13 @@ async function processMessage(userInput) {
       })
     } else if (result.stream) {
       stdout.write(`${c.accent('⬡')} ${c.bold('Jaicode')} ${c.dim(new Date().toLocaleTimeString())}\n  `)
-      const response = await streamResponse(result)
-      state.messages.push({
-        role: 'assistant',
-        content: response,
-        timestamp: Date.now(),
-        processingTime: Date.now() - startTime,
-      })
+      const streamResult = result
+      const response = await streamResponse(streamResult)
+      if (!response || response.trim().length === 0) {
+        state.messages.push({ role: 'assistant', content: `⚠️ ${t('模型返回空内容，可能原因：\n  1. API Key 余额不足或配额用尽\n  2. 模型名称不正确\n  3. 服务商拒绝了请求\n\n请尝试 /config 检查配置，或更换 Provider。', 'Model returned empty response. Possible causes:\n  1. API key has no quota/balance\n  2. Incorrect model name\n  3. Service provider rejected request\n\nTry /config to check settings, or switch provider.')}`, timestamp: Date.now(), processingTime: Date.now() - startTime })
+        continue
+      }
+      state.messages.push({ role: 'assistant', content: response, timestamp: Date.now(), processingTime: Date.now() - startTime })
     }
   } catch (e) {
     clearInterval(spinner)
