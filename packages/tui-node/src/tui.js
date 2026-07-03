@@ -472,7 +472,9 @@ async function processMessage(userInput) {
     const { name: providerName, cfg: providerCfg, endpoint } = getProviderConfig(cfg)
 
     if (!providerCfg?.apiKey) {
-      state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') + `\n[${t('错误', 'Error')}] ${t('未配置 API Key', 'No API Key}')` }
+      const errTag = t('错误', 'Error')
+      const errMsg = t('未配置 API Key', 'No API Key')
+      state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') + `\n[${errTag}] ${errMsg}` }
       state.messages.push({ role: 'assistant', content: `❌ ${t('未配置 API Key', 'No API Key configured')}`, timestamp: Date.now() })
       state.isProcessing = false
       return
