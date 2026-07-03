@@ -579,14 +579,22 @@ async function main() {
     let apiFormat = selected.apiFormat
 
     if (selected.key === '3') {
-      baseURL = await getInput(c.primary('\n  输入中转 API 地址 (如 https://xxx.com/v1/chat/completions):\n  > '))
+      baseURL = await getInput(c.primary('\n  输入中转 API 地址 (如 https://xxx.com/v1 或 .../openai):\n  > '))
       if (!baseURL) {
         stdout.write(c.red('  ✗ 必须提供 API 地址\n\n'))
         process.exit(1)
       }
-      // Ask model name
-      model = await getInput(c.primary('  输入模型名称 (如 gpt-4o/claude-3.5-sonnet): ')) || 'gpt-4o'
-      apiFormat = 'openAI-compatible'
+      // Auto-append /chat/completions if path looks incomplete
+      if (!baseURL.includes('/chat/completions')) {
+        if (baseURL.endsWith('/')) {
+          baseURL = baseURL + 'chat/completions'
+        } else {
+          baseURL = baseURL + '/chat/completions'
+        }
+        stdout.write(c.dim(`  → 补全路径: ${baseURL}\n`))
+      }
+      model = await getInput(c.primary('  输入模型名称: ')) || 'gpt-4o'
+      apiFormat = 'openai'
       stdout.write(c.dim(`  ✓ 中转地址: ${baseURL}\n`))
       stdout.write(c.dim(`  ✓ 模型: ${model}\n`))
     } else if (selected.url) {
