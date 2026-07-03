@@ -404,19 +404,55 @@ async function main() {
   if (!cfg.providers?.anthropic?.apiKey && !process.env.ANTHROPIC_API_KEY) {
     clearScreen()
     stdout.write(c.yellow.bold('\n  ⚠ No API Key configured\n\n'))
-    stdout.write(c.dim('  Anthropic API Key is required.\n'))
-    stdout.write(c.dim('  Get yours at: https://console.anthropic.com/settings/keys\n\n'))
-    const key = await getInput(c.primary('  Paste your API Key (sk-ant-...): '))
-    if (key && key.startsWith('sk-ant-')) {
-      saveAPIKey(key)
-      cfg.providers = cfg.providers || {}
-      cfg.providers.anthropic = { model: 'claude-sonnet-4-20250514', apiKey: key, enabled: true }
-      cfg.defaultProvider = 'anthropic'
-      stdout.write(c.green('  ✓ API Key saved\n\n'))
-    } else {
-      stdout.write(c.red('  ✗ Invalid key. Set ANTHROPIC_API_KEY env var or re-run.\n\n'))
+    stdout.write(c.dim('  请选择你的 LLM Provider:\n\n'))
+
+    const providers = [
+      { key: '1', name: 'Anthropic (Claude)', prefix: 'sk-ant-', url: 'https://console.anthropic.com/settings/keys', model: 'claude-sonnet-4-20250514' },
+      { key: '2', name: 'OpenAI (GPT-4o)', prefix: 'sk-', url: 'https://platform.openai.com/api-keys', model: 'gpt-4o' },
+      { key: '3', name: 'DeepSeek', prefix: 'sk-', url: 'https://platform.deepseek.com/api_keys', model: 'deepseek-chat' },
+      { key: '4', name: '其他兼容 API', prefix: '', url: '', model: 'claude-sonnet-4-20250514' },
+    ]
+
+    providers.forEach(p => {
+      stdout.write(c.dim(`    [${p.key}] ${p.name}\n`))
+    })
+
+    stdout.write('\n')
+    const choice = await getInput(c.primary('  选择 (1-4): '))
+    const selected = providers.find(p => p.key === choice) || providers[0]
+
+    if (selected.url) {
+      stdout.write(c.dim(`\n  获取 API Key: ${selected.url}\n`))
+    }
+
+    const key = await getInput(c.primary(`\n  输入 ${selected.name} API Key: `))
+
+    if (!key || key.length < 10) {
+      stdout.write(c.red('  ✗ 无效的 Key\n\n'))
       process.exit(1)
     }
+
+    if (selected.key === '2' || selected.key === '3') {
+      // OpenAI / DeepSeek
+      const cfg2 = loadConfig()
+      cfg2.providers[selected.key === '2' ? 'openai' : selected.key === '3' ? 'deepseek' : 'openai'] = {
+        model: selected.model,
+        apiKey: key,
+        enabled: true,
+      }
+      cfg2.defaultProvider = selected.key === '2' ? 'openai' : 'deepseek'
+      const dir = path.join(os.homedir(), '.jaicode')
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(cfg2, null, 2))
+      stdout.write(c.green(`\n  ✓ ${selected.name} API Key 已保存\n\n`))
+    } else {
+      // Anthropic or other (treat as Anthropic-compatible)
+      saveAPIKey(key)
+      stdout.write(c.green(`\n  ✓ ${selected.name} API Key 已保存\n\n`))
+    }
+
+    // Small delay then reload config
+    await new Promise(r => setTimeout(r, 800))
   }
 
   // Welcome screen
