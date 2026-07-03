@@ -1,233 +1,301 @@
 #!/usr/bin/env node
 /**
- * Jaicode TUI - Node.js Native Terminal UI
- * Compatible with Apple M5 / macOS 26 / Node.js 20+
- * No Bun required.
+ * Jaicode - Local-first AI Coding Agent
+ * Interactive TUI (Claude Code-like experience)
+ * Pure Node.js, no Bun required. Compatible with Apple M5.
  */
 
 import readline from 'node:readline'
-import { createInterface } from 'node:readline'
 import { stdin, stdout } from 'node:process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import os from 'node:os'
+import { fileURLToPath } from 'node:url'
 import chalk from 'chalk'
-import { spawn } from 'node:child_process'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// ─── Config ───────────────────────────────────────────────────────
-const VERSION = '0.1.0'
-const BG = chalk.bgHex('#0a0f1a')
-const DIM = chalk.hex('#8b949e')
-const PRIMARY = chalk.hex('#00B8D9')
-const ACCENT = chalk.hex('#00E5C9')
-const SUCCESS = chalk.hex('#39d353')
-const WARN = chalk.hex('#ffbd2e')
-const ERR = chalk.hex('#ff5f56')
-const BOLD = chalk.bold
+// ─── Theme ─────────────────────────────────────────────
+const c = {
+  primary: chalk.hex('#00B8D9'),
+  accent: chalk.hex('#00E5C9'),
+  green: chalk.hex('#39d353'),
+  red: chalk.hex('#ff5f56'),
+  yellow: chalk.hex('#ffbd2e'),
+  dim: chalk.hex('#8b949e'),
+  bold: chalk.bold,
+  bg: chalk.bgHex('#1a1f3a'),
+}
 
-// ─── State ────────────────────────────────────────────────────────
+// ─── State ─────────────────────────────────────────────
 const state = {
-  screen: 'welcome',
-  mode: 'code',
+  cwd: process.cwd(),
+  mode: 'auto',
   provider: '',
   model: '',
   lang: detectLang(),
   messages: [],
   isStreaming: false,
+  isProcessing: false,
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────
 function detectLang() {
   const envLang = process.env.LANG || process.env.LC_ALL || ''
   return envLang.startsWith('zh') ? 'zh' : 'en'
 }
 
-function t(zh, en) {
-  return state.lang === 'zh' ? zh : en
+function t(zh, en) { return state.lang === 'zh' ? zh : en }
+
+function clearScreen() { stdout.write('\x1B[2J\x1B[0f') }
+function hideCursor() { stdout.write('\x1B[?25l') }
+function showCursor() { stdout.write('\x1B[?25h') }
+function moveTo(row, col) { stdout.write(`\x1B[${row};${col}H`) }
+
+function detectProject() {
+  try {
+    const files = fs.readdirSync(state.cwd)
+    const pkg = files.find(f => f === 'package.json')
+    if (pkg) {
+      const p = JSON.parse(fs.readFileSync(path.join(state.cwd, pkg), 'utf-8'))
+      return { name: p.name || path.basename(state.cwd), type: 'node', deps: Object.keys(p.dependencies || {}).length }
+    }
+    if (files.includes('Cargo.toml')) return { name: path.basename(state.cwd), type: 'rust' }
+    if (files.includes('go.mod')) return { name: path.basename(state.cwd), type: 'go' }
+    if (files.includes('pyproject.toml') || files.includes('requirements.txt')) return { name: path.basename(state.cwd), type: 'python' }
+    return { name: path.basename(state.cwd), type: 'unknown' }
+  } catch {
+    return { name: path.basename(state.cwd), type: 'unknown' }
+  }
 }
 
-// ─── Rendering ────────────────────────────────────────────────────
-function clearScreen() {
-  stdout.write('\x1B[2J\x1B[0f')
+function loadConfig() {
+  const configPath = path.join(os.homedir(), '.jaicode', 'config.json')
+  try { return JSON.parse(fs.readFileSync(configPath, 'utf-8')) }
+  catch { return { providers: {}, defaultProvider: 'anthropic' } }
 }
 
-function hideCursor() {
-  stdout.write('\x1B[?25l')
+function saveAPIKey(key) {
+  const dir = path.join(os.homedir(), '.jaicode')
+  fs.mkdirSync(dir, { recursive: true })
+  const configPath = path.join(dir, 'config.json')
+  let cfg = {}
+  try { cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8')) } catch {}
+  if (!cfg.providers) cfg.providers = {}
+  cfg.providers.anthropic = { model: 'claude-sonnet-4-20250514', apiKey: key, enabled: true }
+  cfg.defaultProvider = 'anthropic'
+  if (!cfg.agent) cfg.agent = { maxRetries: 5 }
+  fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2))
 }
 
-function showCursor() {
-  stdout.write('\x1B[?25h')
+function classifyIntent(input) {
+  const lower = input.toLowerCase()
+  if (/^(解释|explain|what|how|为什么|why|描述|describe)/.test(lower)) return 'ask'
+  if (/^(修复|fix|debug|bug|报错|错误|not work|broken|test failed)/.test(lower)) return 'debug'
+  if (/^(设计|design|架构|architecture|方案|plan for|规划)/.test(lower)) return 'plan'
+  if (/^(批量|batch|所有|all files|refactor all)/.test(lower)) return 'plan'
+  return 'code'
 }
 
-function renderHeader() {
-  const title = BOLD.hex('#00B8D9')('⬡ Jaicode')
-  const ver = DIM(` v${VERSION}`)
-  const mode = state.screen === 'chat'
-    ? `  ${PRIMARY(`▸ ${state.mode.toUpperCase()}`)}`
-    : ''
-  stdout.write(`${title}${ver}${mode}\n`)
-  stdout.write(DIM('─'.repeat(Math.min(process.stdout.columns || 60, 60))) + '\n')
-}
-
-function renderWelcomeScreen() {
+// ─── Rendering ─────────────────────────────────────────
+function renderStartup() {
   clearScreen()
   stdout.write('\n')
 
-  // ASCII Logo
-  const logo = [
-    '\x1B[38;2;0;184;217m   ██╗ █████╗ ██╗ ██████╗ ██████╗ ██████╗ ███████╗',
-    '   ██║██╔══██╗██║██╔════╝██╔══██╗██╔══██╗██╔════╝',
-    '   ██║███████║██║██║     ██║  ██║██║  ██║█████╗  ',
-    '   ██║██╔══██║██║██║     ██║  ██║██║  ██║██╔══╝  ',
-    '   ██║██║  ██║██║╚██████╗██████╔╝██████╔╝███████╗',
-    '   ╚═╝╚═╝  ╚═╝╚═╝ ╚═════╝╚═════╝ ╚═════╝ ╚══════╝\x1B[0m',
-  ]
-  logo.forEach(line => stdout.write('  ' + line + '\n'))
+  // Compact logo
+  stdout.write(c.primary.bold('   ⬡ Jaicode') + c.dim(' v0.1.0 — Local-first AI Coding Agent\n'))
+  stdout.write(c.dim('   ' + '─'.repeat(50) + '\n\n'))
 
-  stdout.write(`\n  ${DIM(t('本地优先 AI 编程助手', 'Local-first AI Coding Agent'))}\n`)
-  stdout.write(`  ${DIM('─'.repeat(40))}\n\n`)
+  // Project context
+  const proj = detectProject()
+  stdout.write(c.dim('   Project: ') + c.accent(proj.name) + c.dim(` (${proj.type})\n`))
+  stdout.write(c.dim('   Path:    ') + c.dim(state.cwd) + '\n')
 
-  // Mode selection
-  const modes = [
-    { key: '1', name: t('架构', 'Plan'), desc: 'Architect', icon: '◈' },
-    { key: '2', name: t('代码', 'Code'), desc: 'Modify', icon: '⌘' },
-    { key: '3', name: t('调试', 'Debug'), desc: 'Fix', icon: '⚡' },
-    { key: '4', name: t('问答', 'Ask'), desc: 'Q&A', icon: '?' },
-  ]
-
-  modes.forEach(m => {
-    const isActive = ['plan', 'code', 'debug', 'ask'][parseInt(m.key) - 1] === state.mode
-    const color = isActive ? PRIMARY : DIM
-    const marker = isActive ? '▸' : '·'
-    const line = `    ${marker} [${m.key}] ${color(m.icon + ' ' + m.name.padEnd(6))} ${DIM(m.desc)}`
-    stdout.write(line + '\n')
-  })
-
-  stdout.write(`\n  ${DIM('─'.repeat(40))}\n`)
-  stdout.write(`  ${SUCCESS(t('Enter 开始 · 1-4 选择模式 · Q 退出', 'Enter start · 1-4 mode · Q quit'))}\n`)
-}
-
-// ─── Interactive Chat Screen ──────────────────────────────────────
-async function renderChatScreen() {
-  clearScreen()
-  renderHeader()
-  stdout.write('\n')
-
-  if (state.messages.length === 0) {
-    const hint = t(
-      '  ↑ 输入任务描述开始 · Ctrl+M 切换模式 · Ctrl+C 退出\n  示例: ',
-      '  ↑ Type a task to begin · Ctrl+M switch mode · Ctrl+C exit\n   Example: '
-    )
-    stdout.write(DIM(hint) + ACCENT(
-      state.mode === 'code' ? '"修复登录接口空指针异常"' :
-      state.mode === 'debug' ? '"npm test"' :
-      state.mode === 'plan' ? '"设计用户认证模块"' :
-      '"这段代码做了什么？"'
-    ) + '\n\n')
+  // Provider status
+  const cfg = loadConfig()
+  const providerCfg = cfg.providers?.[cfg.defaultProvider]
+  if (providerCfg?.apiKey) {
+    state.provider = cfg.defaultProvider
+    state.model = providerCfg.model || 'claude-sonnet-4-20250514'
+    stdout.write(c.dim('   Provider: ') + c.green(`✓ ${cfg.defaultProvider}`) +
+                c.dim(` (${state.model})`) + '\n')
   } else {
-    state.messages.forEach(msg => {
-      const prefix = msg.role === 'user'
-        ? `${PRIMARY('❯')} ${BOLD(t('你', 'You'))}`
-        : `${ACCENT('⬡')} ${BOLD('Jaicode')}`
-      const time = DIM(new Date(msg.timestamp).toLocaleTimeString())
-      stdout.write(`  ${prefix} ${time}\n`)
+    stdout.write(c.dim('   Provider: ') + c.red('✗ Not configured') + '\n')
+    stdout.write(c.yellow('\n   ⚠ No API Key found. You can add it via:\n'))
+    stdout.write(c.dim('     jaicode config --provider anthropic --api-key sk-xxx\n'))
+    stdout.write(c.dim('     Or set ANTHROPIC_API_KEY environment variable.\n'))
+  }
+
+  stdout.write(c.dim('\n   ' + '─'.repeat(50) + '\n'))
+  stdout.write(c.dim(`   ${t('输入任务描述直接开始 · Ctrl+C 退出 · /help 命令列表', 'Type a task to begin · Ctrl+C exit · /help commands')}\n\n`))
+}
+
+function renderMessages() {
+  if (state.messages.length === 0) {
+    stdout.write(c.dim(`   ${t('💬 开始对话吧！例如:', '💬 Start a conversation:')}\n`))
+    stdout.write(c.dim('     "修复登录接口的 bug"\n'))
+    stdout.write(c.dim('     "解释这段代码做了什么"\n'))
+    stdout.write(c.dim('     "设计用户认证模块架构"\n\n'))
+    return
+  }
+
+  state.messages.forEach(msg => {
+    const time = c.dim(new Date(msg.timestamp).toLocaleTimeString())
+    if (msg.role === 'user') {
+      stdout.write(`${c.primary('❯')} ${c.bold(t('You', '你'))} ${time}\n`)
+      stdout.write(`  ${msg.content}\n\n`)
+    } else if (msg.role === 'assistant') {
+      stdout.write(`${c.accent('⬡')} ${c.bold('Jaicode')} ${time}`)
+      if (msg.processingTime) stdout.write(c.dim(` (${msg.processingTime}ms)`))
+      stdout.write('\n')
 
       const lines = msg.content.split('\n')
       lines.forEach(line => {
         if (line.startsWith('+') && !line.startsWith('+++')) {
-          stdout.write('  ' + SUCCESS(line) + '\n')
+          stdout.write('  ' + c.green(line) + '\n')
         } else if (line.startsWith('-') && !line.startsWith('---')) {
-          stdout.write('  ' + ERR(line) + '\n')
+          stdout.write('  ' + c.red(line) + '\n')
         } else {
           stdout.write('  ' + line + '\n')
         }
       })
       stdout.write('\n')
-    })
-  }
-
-  // Status bar
-  const statusBar = state.isStreaming
-    ? `  ${SUCCESS('●')} ${PRIMARY(state.mode.toUpperCase())} ${DIM('|')} ${WARN('⣿ streaming...')}`
-    : `  ${SUCCESS('●')} ${PRIMARY(state.mode.toUpperCase())} ${DIM('|')} ${DIM(state.lang === 'zh' ? '中英' : 'EN')} ${DIM('|')} ${DIM('Ctrl+C 退出')}`
-  stdout.write('\n' + statusBar + '\n')
+    } else if (msg.role === 'system') {
+      stdout.write(c.dim(`  ℹ ${msg.content}\n\n`))
+    }
+  })
 }
 
-// ─── LLM API Call ─────────────────────────────────────────────────
-async function callLLM(messages, provider, model) {
+function renderStatusBar() {
+  const col = Math.min(process.stdout.columns || 60, 60)
+  const mode = state.mode === 'auto' ? t('自动', 'Auto') : state.mode.toUpperCase()
+  const provider = state.provider || t('未设置', 'None')
+  const statusColor = state.isProcessing ? c.yellow : c.green
+  const statusIcon = state.isProcessing ? '◐' : '●'
+
+  const left = `  ${statusIcon} ${mode} | ${provider}`
+  const right = `Ctrl+C ${t('退出', 'exit')} | ${state.lang === 'zh' ? '中' : 'EN'}`
+  const padding = ' '.repeat(Math.max(0, col - left.length - right.length - 4))
+
+  stdout.write('\n' + statusColor(left) + padding + c.dim(right) + '\n')
+}
+
+function renderSpinner(text) {
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+  let i = 0
+  return setInterval(() => {
+    stdout.write(`\r  ${c.primary(frames[i % frames.length])} ${text}`)
+    i++
+  }, 80)
+}
+
+// ─── LLM API ───────────────────────────────────────────
+async function callLLM(messages) {
   const cfg = loadConfig()
   const providerCfg = cfg.providers?.[cfg.defaultProvider]
   if (!providerCfg?.apiKey) {
-    return t('❌ 未配置 API Key，请运行：jaicode config --provider anthropic --api-key sk-xxx',
-             '❌ No API Key configured. Run: jaicode config --provider anthropic --api-key sk-xxx')
+    return { error: t('未配置 API Key', 'No API Key configured') }
   }
 
   const apiKey = providerCfg.apiKey
-  const modelName = providerCfg.model || 'claude-sonnet-4-20250514'
+  const model = providerCfg.model || 'claude-sonnet-4-20250514'
+
+  const modePrompts = {
+    plan: t('你是一个架构设计专家。生成架构决策记录（ADR）。',
+            'You are an architecture design expert. Generate ADRs.'),
+    code: t('你是一个编程助手。修改代码时使用红色-删除和绿色+新增的 diff 格式展示变更。',
+            'You are a coding assistant. Show file changes in diff format with -red and +green.'),
+    debug: t('你是一个调试助手。分析错误原因并提供修复方案。',
+             'You are a debugging assistant. Analyze errors and provide fixes.'),
+    ask: t('你是一个简洁的问答助手。直接回答问题，不要做出代码变更。',
+           'You are a concise Q&A assistant. Answer directly without code changes.'),
+  }
+
+  const systemPrompt = `${modePrompts[state.mode] || modePrompts.code}
+${state.lang === 'zh' ? '用中文回复。' : 'Reply in English.'}
+当前项目: ${detectProject().name}
+项目路径: ${state.cwd}`
 
   const body = {
-    model: modelName,
+    model,
     max_tokens: 4096,
-    messages: messages.map(m => ({
-      role: m.role === 'tool' ? 'user' : m.role,
-      content: m.content,
-    })),
     stream: true,
+    system: systemPrompt,
+    messages: messages
+      .filter(m => m.role !== 'system')
+      .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })),
   }
 
-  if (messages[0]?.role === 'system') {
-    body.system = messages[0].content
-    body.messages = body.messages.slice(1)
+  const isAnthropic = cfg.defaultProvider !== 'openai'
+  const url = isAnthropic ? 'https://api.anthropic.com/v1/messages' : 'https://api.openai.com/v1/chat/completions'
+
+  const headers = { 'Content-Type': 'application/json' }
+  if (isAnthropic) {
+    headers['x-api-key'] = apiKey
+    headers['anthropic-version'] = '2023-06-01'
+    delete body.system
+    body.messages = [
+      { role: 'user', content: systemPrompt },
+      ...body.messages
+    ]
+  } else {
+    headers['Authorization'] = `Bearer ${apiKey}`
   }
 
-  const controller = new AbortController()
-
-  if (cfg.defaultProvider === 'openai') {
-    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
-    if (!resp.ok) return `❌ OpenAI API error: ${resp.status}`
-    return resp.body
-  }
-
-  // Anthropic (default)
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+  const resp = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
+    headers,
     body: JSON.stringify(body),
-    signal: controller.signal,
   })
 
-  if (!resp.ok) return `❌ Anthropic API error: ${resp.status}`
-  return resp.body
-}
-
-function loadConfig() {
-  const configPath = path.join(os.homedir(), '.jaicode', 'config.json')
-  try {
-    return JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-  } catch {
-    return { providers: {}, defaultProvider: 'anthropic' }
+  if (!resp.ok) {
+    const err = await resp.text()
+    return { error: `API ${cfg.defaultProvider} error: ${resp.status}` }
   }
+
+  return { stream: resp.body }
 }
 
-// ─── Readline Input ───────────────────────────────────────────────
+async function streamResponse(stream) {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let response = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    const text = decoder.decode(value)
+    const lines = text.split('\n')
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6).trim()
+        if (data === '[DONE]') continue
+        try {
+          const json = JSON.parse(data)
+          let content
+          if (json.choices) {
+            content = json.choices[0]?.delta?.content
+          } else if (json.type === 'content_block_delta') {
+            content = json.delta?.text
+          }
+          if (content) {
+            response += content
+            process.stdout.write(content)
+          }
+        } catch { /* skip */ }
+      }
+    }
+  }
+
+  return response
+}
+
+// ─── Input ─────────────────────────────────────────────
 async function getInput(prompt) {
   return new Promise(resolve => {
-    const rl = createInterface({ input: stdin, output: stdout })
+    const rl = readline.createInterface({ input: stdin, output: stdout })
     stdout.write(prompt)
     rl.on('line', line => {
       rl.close()
@@ -236,269 +304,196 @@ async function getInput(prompt) {
   })
 }
 
-// ─── Cleanup ──────────────────────────────────────────────────────
-function cleanup() {
-  try { stdin.setRawMode(false); stdin.pause() } catch { /* not a TTY */ }
-  showCursor()
-}
-
-// ─── Welcome Raw Mode ─────────────────────────────────────────────
-let resolveWelcome
-
-function onWelcomeKey(key) {
-  if (key === '\u0003') { cleanup(); process.exit(0) }
-  if (key === '\r' || key === '\n') { resolveWelcome(); return }
-  if (key === 'q' || key === 'Q') { cleanup(); process.exit(0) }
-  if (key >= '1' && key <= '4') {
-    const modes = ['plan', 'code', 'debug', 'ask']
-    state.mode = modes[parseInt(key) - 1]
-    renderWelcomeScreen()
-  }
-}
-
-function rawModeWelcome() {
-  stdin.setRawMode(true)
-  stdin.resume()
-  stdin.setEncoding('utf8')
+async function getRawInput(prompt) {
   return new Promise(resolve => {
-    resolveWelcome = () => {
-      stdin.setRawMode(false)
-      stdin.pause()
-      state.screen = 'chat'
-      runChatLoop()
+    if (!stdin.isTTY) return getInput(prompt)
+
+    stdin.setRawMode(true)
+    stdin.resume()
+    stdin.setEncoding('utf8')
+    stdout.write(prompt)
+
+    let buffer = ''
+    const onData = (key) => {
+      if (key === '\r' || key === '\n') {
+        stdin.setRawMode(false)
+        stdin.pause()
+        stdin.removeListener('data', onData)
+        stdout.write('\n')
+        resolve(buffer)
+      } else if (key === '\u0003') {
+        stdin.setRawMode(false)
+        stdin.pause()
+        showCursor()
+        process.exit(0)
+      } else if (key === '\u007f') {
+        buffer = buffer.slice(0, -1)
+      } else if (key === '\t') {
+        buffer += '  '
+      } else if (!key.startsWith('\x1b')) {
+        buffer += key
+        stdout.write(key)
+      }
     }
-    stdin.on('data', onWelcomeKey)
+    stdin.on('data', onData)
   })
 }
 
-// ─── Fallback Non-TTY Welcome ─────────────────────────────────────
-async function fallbackWelcome() {
-  renderWelcomeScreen()
-  stdout.write(`\n  ${DIM(t('输入数字 (1-4) 选择模式后回车', 'Enter mode number (1-4) then Enter'))}: `)
-  const input = await getInput('')
-  const num = parseInt(input)
-  if (num >= 1 && num <= 4) {
-    state.mode = ['plan', 'code', 'debug', 'ask'][num - 1]
+// ─── Main Loop ─────────────────────────────────────────
+async function processMessage(userInput) {
+  const startTime = Date.now()
+
+  // Add user message
+  state.messages.push({
+    role: 'user',
+    content: userInput,
+    timestamp: Date.now(),
+  })
+
+  // Auto-classify intent
+  const intent = state.mode === 'auto' ? classifyIntent(userInput) : state.mode
+
+  // Show processing
+  state.isProcessing = true
+  const spinner = renderSpinner(c.dim(
+    intent === 'ask' ? t('思考中...', 'Thinking...') :
+    intent === 'plan' ? t('设计方案中...', 'Designing...') :
+    intent === 'debug' ? t('分析问题中...', 'Analyzing...') :
+    t('处理中...', 'Processing...')
+  ))
+
+  try {
+    const result = await callLLM(state.messages)
+    clearInterval(spinner)
+    stdout.write('\r  ' + ' '.repeat(50) + '\r')
+
+    if (result.error) {
+      state.messages.push({
+        role: 'assistant',
+        content: `❌ ${result.error}`,
+        timestamp: Date.now(),
+        processingTime: Date.now() - startTime,
+      })
+    } else if (result.stream) {
+      stdout.write(`${c.accent('⬡')} ${c.bold('Jaicode')} ${c.dim(new Date().toLocaleTimeString())}\n  `)
+      const response = await streamResponse(result.stream)
+      state.messages.push({
+        role: 'assistant',
+        content: response,
+        timestamp: Date.now(),
+        processingTime: Date.now() - startTime,
+      })
+    }
+  } catch (e) {
+    clearInterval(spinner)
+    stdout.write('\r  ' + ' '.repeat(50) + '\r')
+    state.messages.push({
+      role: 'assistant',
+      content: `❌ ${e.message}`,
+      timestamp: Date.now(),
+      processingTime: Date.now() - startTime,
+    })
   }
-  state.screen = 'chat'
-  await runChatLoop()
+
+  state.isProcessing = false
 }
 
-// ─── Main Loop ────────────────────────────────────────────────────
 async function main() {
-  renderWelcomeScreen()
-
-  // Check if stdin is an interactive TTY
-  if (stdin.isTTY) {
-    await rawModeWelcome()
-  } else {
-    await fallbackWelcome()
+  // Check API key if not configured
+  const cfg = loadConfig()
+  if (!cfg.providers?.anthropic?.apiKey && !process.env.ANTHROPIC_API_KEY) {
+    clearScreen()
+    stdout.write(c.yellow.bold('\n  ⚠ No API Key configured\n\n'))
+    stdout.write(c.dim('  Anthropic API Key is required.\n'))
+    stdout.write(c.dim('  Get yours at: https://console.anthropic.com/settings/keys\n\n'))
+    const key = await getInput(c.primary('  Paste your API Key (sk-ant-...): '))
+    if (key && key.startsWith('sk-ant-')) {
+      saveAPIKey(key)
+      cfg.providers = cfg.providers || {}
+      cfg.providers.anthropic = { model: 'claude-sonnet-4-20250514', apiKey: key, enabled: true }
+      cfg.defaultProvider = 'anthropic'
+      stdout.write(c.green('  ✓ API Key saved\n\n'))
+    } else {
+      stdout.write(c.red('  ✗ Invalid key. Set ANTHROPIC_API_KEY env var or re-run.\n\n'))
+      process.exit(1)
+    }
   }
-}
 
-async function runChatLoop() {
+  // Welcome screen
+  renderStartup()
+
+  // Chat loop
   hideCursor()
-
   while (true) {
-    await renderChatScreen()
+    renderMessages()
+    renderStatusBar()
+    stdout.write('\n')
 
-    const userInput = await getInput(PRIMARY('❯ '))
-
-    if (!userInput.trim()) continue
+    const input = await getInput(c.primary('  ❯ '))
+    if (!input.trim()) continue
 
     // Handle commands
-    if (userInput.startsWith('/')) {
-      if (userInput === '/quit' || userInput === '/exit') break
-      if (userInput === '/mode') {
-        const modes = ['plan', 'code', 'debug', 'ask']
-        const idx = modes.indexOf(state.mode)
-        state.mode = modes[(idx + 1) % modes.length]
-        state.messages.push({
-          role: 'system',
-          content: t(`已切换到 ${state.mode.toUpperCase()} 模式`, `Switched to ${state.mode.toUpperCase()} mode`),
-          timestamp: Date.now(),
-        })
+    if (input.startsWith('/')) {
+      const cmd = input.slice(1).trim()
+      if (cmd === 'quit' || cmd === 'exit' || cmd === 'q') break
+      if (cmd === 'clear') {
+        state.messages = []
+        clearScreen()
+        renderStartup()
         continue
       }
-      if (userInput === '/help') {
+      if (cmd === 'help') {
         state.messages.push({
           role: 'system',
           content: t(
-            '命令: /quit 退出 · /mode 切换模式 · /help 帮助',
-            'Commands: /quit exit · /mode switch mode · /help'
+            '命令: /quit 退出 · /clear 清屏 · /mode 切换模式 · /config 配置\n模式: 自然语言输入自动识别意图（修复=debug, 解释=ask, 设计=plan, 其他=code）',
+            'Commands: /quit exit · /clear clear · /mode switch mode · /config\nModes: Natural language input auto-classifies intent'
           ),
           timestamp: Date.now(),
         })
         continue
       }
-    }
-
-    // Add user message
-    state.messages.push({ role: 'user', content: userInput, timestamp: Date.now() })
-
-    // Call LLM
-    state.isStreaming = true
-    await renderChatScreen()
-
-    const modePrompts = {
-      plan: 'You are an architecture design assistant. Generate Architecture Decision Records (ADR).',
-      code: 'You are a coding assistant. Output changed files in FILE: format with complete code.',
-      debug: 'You are a debugging assistant. Analyze errors and provide fixes.',
-      ask: 'You are a Q&A assistant. Answer concisely and accurately.',
-    }
-    const langNote = state.lang === 'zh' ? 'Reply in Chinese.' : 'Reply in English.'
-
-    const messages = [
-      { role: 'system', content: `${modePrompts[state.mode]} ${langNote}` },
-      ...state.messages.slice(0, -1).map(m => ({ role: m.role, content: m.content })),
-    ]
-
-    try {
-      const result = await callLLM(messages, state.provider, state.model)
-
-      if (typeof result === 'string') {
-        // Plain text (likely error)
-        state.messages.push({ role: 'assistant', content: result, timestamp: Date.now() })
-      } else {
-        // Read stream
-        let response = ''
-        const reader = result.getReader()
-        const decoder = new TextDecoder()
-
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          const text = decoder.decode(value)
-          const lines = text.split('\n')
-
-          for (const line of lines) {
-            // Anthropic format: event: content_block_delta / data: {...}
-            // OpenAI format: data: {...}
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6).trim()
-              if (data === '[DONE]') continue
-              try {
-                const json = JSON.parse(data)
-                // OpenAI
-                let content = json.choices?.[0]?.delta?.content
-                // Anthropic
-                if (!content && json.type === 'content_block_delta') {
-                  content = json.delta?.text
-                }
-                if (content) {
-                  response += content
-                  process.stdout.write(content)
-                }
-              } catch { /* skip */ }
-            }
-          }
-        }
-
-        state.messages.push({ role: 'assistant', content: response, timestamp: Date.now() })
-      }
-    } catch (e) {
-      state.messages.push({
-        role: 'assistant',
-        content: `❌ ${e.message}`,
-        timestamp: Date.now(),
-      })
-    }
-
-    state.isStreaming = false
-  }
-
-  showCursor()
-  clearScreen()
-  stdout.write(`\n  ${SUCCESS(t('再见！', 'Bye!'))}\n\n`)
-}
-      if (userInput === '/help') {
+      if (cmd === 'mode') {
+        const modes = ['auto', 'plan', 'code', 'debug', 'ask']
+        const idx = modes.indexOf(state.mode === 'auto' ? 'auto' : state.mode)
+        state.mode = state.mode === 'auto' ? 'code' : modes[idx] === 'ask' ? 'auto' : modes[(idx + 1) % modes.length]
         state.messages.push({
           role: 'system',
-          content: t(
-            '命令: /quit 退出 · /mode 切换模式 · /help 帮助',
-            'Commands: /quit exit · /mode switch mode · /help'
-          ),
+          content: t(`模式: ${state.mode.toUpperCase()}`, `Mode: ${state.mode.toUpperCase()}`),
           timestamp: Date.now(),
         })
         continue
       }
-    }
-
-    // Add user message
-    state.messages.push({ role: 'user', content: userInput, timestamp: Date.now() })
-
-    // Call LLM
-    state.isStreaming = true
-    await renderChatScreen()
-
-    const modePrompts = {
-      plan: 'You are an architecture design assistant. Generate Architecture Decision Records (ADR).',
-      code: 'You are a coding assistant. Output changed files in FILE: format with complete code.',
-      debug: 'You are a debugging assistant. Analyze errors and provide fixes.',
-      ask: 'You are a Q&A assistant. Answer concisely and accurately.',
-    }
-    const langNote = state.lang === 'zh' ? 'Reply in Chinese.' : 'Reply in English.'
-
-    const messages = [
-      { role: 'system', content: `${modePrompts[state.mode]} ${langNote}` },
-      ...state.messages.filter(m => !m.isStreaming).map(m => ({ role: m.role, content: m.content })),
-    ]
-
-    try {
-      const result = await callLLM(messages, state.provider, state.model)
-
-      if (typeof result === 'string') {
-        // Plain text (likely error)
-        state.messages.push({ role: 'assistant', content: result, timestamp: Date.now() })
-      } else {
-        // Read stream
-        let response = ''
-        const reader = result.getReader()
-        const decoder = new TextDecoder()
-
-        if (state.provider === 'openai' || result.constructor.name === 'ReadableStream') {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            const text = decoder.decode(value)
-            const lines = text.split('\n').filter(l => l.startsWith('data: ') && l !== 'data: [DONE]')
-
-            for (const line of lines) {
-              try {
-                const json = JSON.parse(line.slice(6))
-                const content = json.choices?.[0]?.delta?.content ||
-                               json.content_block?.text ||
-                               json.delta?.text || ''
-                if (content) {
-                  response += content
-                  process.stdout.write(content)
-                }
-              } catch { /* skip */ }
-            }
-          }
-        }
-
-        state.messages.push({ role: 'assistant', content: response, timestamp: Date.now() })
+      if (cmd === 'config') {
+        state.messages.push({
+          role: 'system',
+          content: t('运行 `jaicode config --provider <name> --api-key <key>`', 'Run `jaicode config --provider <name> --api-key <key>`'),
+          timestamp: Date.now(),
+        })
+        continue
       }
-    } catch (e) {
+
       state.messages.push({
-        role: 'assistant',
-        content: `❌ ${e.message}`,
+        role: 'system',
+        content: t(`未知命令: /${cmd}（输入 /help 查看帮助）`, `Unknown command: /${cmd} (type /help for help)`),
         timestamp: Date.now(),
       })
+      continue
     }
 
-    state.isStreaming = false
+    // Process natural language input
+    await processMessage(input)
+    clearScreen()
+    renderStartup()
   }
 
   showCursor()
   clearScreen()
-  stdout.write(`\n  ${SUCCESS(t('再见！', 'Bye!'))}\n\n`)
+  stdout.write(`\n  ${c.green(t('再见！', 'Bye!'))}\n\n`)
 }
 
-// ─── Entry ────────────────────────────────────────────────────────
 main().catch(e => {
   showCursor()
-  console.error(ERR('Fatal:'), e.message)
+  console.error(c.red('Fatal:'), e.message)
   process.exit(1)
 })
