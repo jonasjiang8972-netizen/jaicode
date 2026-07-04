@@ -18,13 +18,17 @@ import { Analytics } from './analytics.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.3.0'
+const VERSION = '0.5.0'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
 
 // ─── Analytics ─────────────────────────────────────────
 const analytics = new Analytics()
+
+// ─── Skills ─────────────────────────────────────────────
+import { scanProject, buildProjectSummary, buildFileContext, readFile } from './skills/file-reader.js'
+import { executeCommand, validateCommand } from './skills/shell-executor.js'
 
 // ─── Theme ─────────────────────────────────────────────
 const c = {
@@ -48,6 +52,7 @@ const state = {
   messages: [],
   isStreaming: false,
   isProcessing: false,
+  projectSummary: '',
 }
 
 // ─── Helpers ───────────────────────────────────────────
@@ -171,6 +176,11 @@ async function validateAPIKey(providerCfg) {
 function renderStartup() {
   clearScreen()
   stdout.write('\n')
+
+  // Load project summary and file context
+  try {
+    state.projectSummary = buildProjectSummary(state.cwd)
+  } catch { state.projectSummary = '(unable to scan project)' }
 
   // Jai pixel dinosaur + wordmark side by side
   const mascotLines = jai.render(false)
@@ -562,9 +572,12 @@ async function processMessage(userInput) {
 如果问题需要通过命令排查，直接给出可以执行的命令。`,
     }
     const langNote = state.lang === 'zh' ? '用中文回复。' : 'Reply in English.'
+    const skillsNote = state.lang === 'zh'
+      ? '\n\n你可以使用以下能力：\n- 读文件: 自动读取用户提到的文件路径\n- 写文件: 使用 diff 格式输出变更\n- 执行命令: 给出具体可执行的命令\n\n当前项目文件结构:\n' + (state.projectSummary || '(未扫描)')
+      : '\n\nSkills available:\n- Read files: paths you mention are auto-included\n- Write files: use diff format for changes\n- Execute commands: provide runnable commands\n\nProject files:\n' + (state.projectSummary || '(not scanned)')
 
     const messages = [
-      { role: 'system', content: `${modePrompts[intent] || modePrompts.code} ${langNote}\nProject: ${detectProject().name}` },
+      { role: 'system', content: `${modePrompts[intent] || modePrompts.code} ${langNote}${skillsNote}` },
       ...state.messages
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .map(m => ({ role: m.role, content: m.content })),
@@ -767,8 +780,8 @@ async function main() {
         state.messages.push({
           role: 'system',
           content: t(
-            '命令: /quit 退出 · /clear 清屏 · /mode 切换模式 · /stats 用量统计 · /config 配置\n模式: 自然语言输入自动识别意图（修复=debug, 解释=ask, 设计=plan, 其他=code）',
-            'Commands: /quit exit · /clear clear · /mode switch mode · /stats usage · /config'
+            '命令: /quit 退出 · /clear 清屏 · /mode 切换模式 · /stats 用量 · /config 配置 · /read <文件> · /exec <命令>',
+            'Commands: /quit exit · /clear clear · /mode /stats usage · /config · /read <file> · /exec <cmd>'
           ),
           timestamp: Date.now(),
         })
@@ -795,6 +808,39 @@ async function main() {
           content: t('运行 `jaicode config --provider <name> --api-key <key>`', 'Run `jaicode config --provider <name> --api-key <key>`'),
           timestamp: Date.now(),
         })
+        continue
+      }
+      if (cmd === 'read') {
+        // Usage: read <filepath>
+        const filePath = input.slice(5).trim() || argsAfterCmd[0]
+        if (!filePath) {
+          state.messages.push({ role: 'system', content: t('用法: /read <文件路径>', 'Usage: read <filepath>'), timestamp: Date.now() })
+        } else {
+          const result = readFile(state.cwd, filePath)
+          if (result.error) {
+            state.messages.push({ role: 'system', content: t('读取失败', 'Error') + ': ' + result.error, timestamp: Date.now() })
+          } else {
+            state.messages.push({ role: 'system', content: '--- ' + filePath + ' ---\n' + result.content, timestamp: Date.now() })
+          }
+        }
+        continue
+      }
+      if (cmd === 'exec' || cmd === 'run') {
+        // Usage: exec <command>
+        const execCmd = input.slice(cmd === 'exec' ? 5 : 4).trim() || argsAfterCmd.join(' ')
+        if (!execCmd) {
+          state.messages.push({ role: 'system', content: t('用法: /exec <命令>', 'Usage: exec <command>'), timestamp: Date.now() })
+        } else {
+          const validation = validateCommand(execCmd)
+          if (!validation.safe) {
+            state.messages.push({ role: 'system', content: '⚠️ ' + validation.reason, timestamp: Date.now() })
+          } else {
+            state.messages.push({ role: 'system', content: '$ ' + execCmd + '\n' + t('执行中...', 'Running...'), timestamp: Date.now() })
+            const result = await executeCommand(execCmd, state.cwd)
+            const output = (result.stdout + (result.stderr ? '\nSTDERR: ' + result.stderr : '')).slice(0, 3000)
+            state.messages.push({ role: 'system', content: (output || t('(无输出)', '(no output)')) + '\n[exit: ' + result.code + ']', timestamp: Date.now() })
+          }
+        }
         continue
       }
 
