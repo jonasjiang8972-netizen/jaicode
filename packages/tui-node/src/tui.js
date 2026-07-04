@@ -43,8 +43,23 @@ const c = {
 }
 
 // ─── State ─────────────────────────────────────────────
+function findProjectRoot(startDir) {
+  let dir = startDir
+  const { root } = path.parse(dir)
+  while (dir !== root) {
+    try {
+      if (fs.existsSync(path.join(dir, 'package.json')) ||
+          fs.existsSync(path.join(dir, '.git'))) {
+        return dir
+      }
+    } catch { /* ignore */ }
+    dir = path.dirname(dir)
+  }
+  return startDir // fallback to cwd
+}
+
 const state = {
-  cwd: process.cwd(),
+  cwd: findProjectRoot(process.cwd()),
   mode: 'auto',
   provider: '',
   model: '',
