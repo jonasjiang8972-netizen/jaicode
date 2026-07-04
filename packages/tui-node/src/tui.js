@@ -13,6 +13,7 @@ import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import chalk from 'chalk'
 import { JaiMascot } from './mascot.js'
+import { Analytics } from './analytics.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -21,6 +22,9 @@ const VERSION = '0.3.0'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
+
+// ─── Analytics ─────────────────────────────────────────
+const analytics = new Analytics()
 
 // ─── Theme ─────────────────────────────────────────────
 const c = {
@@ -282,9 +286,12 @@ function renderStatusBar() {
   const orange = chalk.hex('#8B5E3C')
   const coloredMascot = mascotLine.replace(/▓/g, orange('▓')).replace(/[◉★✦]/g, chalk.cyan('◉'))
 
-  const left = `  ${coloredMascot}  ${statusIcon} ${mode} | ${provider}`
-  const right = `Ctrl+C ${t('退出', 'exit')} | ${state.lang === 'zh' ? '中' : 'EN'}`
-  const padding = ' '.repeat(Math.max(0, 60 - left.length - right.length - 4))
+  // Get analytics
+  const stats = analytics.getStatusBarStats()
+
+  const left = `  ${coloredMascot}  ${statusIcon} ${mode}`
+  const right = `${stats.current} | ${stats.total}`
+  const padding = ' '.repeat(Math.max(0, process.stdout.columns - left.length - right.length - 4))
 
   stdout.write('\n' + statusColor(left) + padding + c.dim(right) + '\n')
 }
@@ -608,10 +615,15 @@ async function processMessage(userInput) {
       if (!response || response.trim().length === 0) {
         thinking.push(`[${t('响应为空', 'Empty')}] ${t('对方返回空内容', 'Empty response received')}`)
         state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
-        state.messages.push({ role: 'assistant', content: `⚠️ ${t('模型返回空内容，请检查 API Key 或模型名称', 'Model returned empty response. Check API key or model.')}`, timestamp: Date.now(), processingTime: Date.now() - startTime })
+        analytics.recordRequest(state.model || 'unknown', 0, 0, Date.now() - startTime, true)
+        state.messages.push({ role: 'assistant', content: `⚠️ ${t('模型返回空内容，请检查 API Key 或模型名称', 'Model empty. Check API key or model.')}`, timestamp: Date.now(), processingTime: Date.now() - startTime })
       } else {
-        thinking.push(`[${t('完成', 'Done')}] ${t('响应长度', 'Response')}: ${response.length} ${t('字符', 'chars')}`)
+        thinking.push(`[${t('完成', 'Done')}] ${t('响应长度', 'Response')}: ${response.length} chars`)
         state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
+        // Record analytics: estimate tokens (rough: chars/4 input for prompt, chars/3 for output)
+        const promptTokens = Math.ceil(userInput.length / 4)
+        const outputTokens = Math.ceil(response.length / 3)
+        analytics.recordRequest(state.model || 'unknown', promptTokens, outputTokens, Date.now() - startTime, false)
         state.messages.push({ role: 'assistant', content: response, timestamp: Date.now(), processingTime: Date.now() - startTime })
       }
     }
@@ -755,11 +767,15 @@ async function main() {
         state.messages.push({
           role: 'system',
           content: t(
-            '命令: /quit 退出 · /clear 清屏 · /mode 切换模式 · /config 配置\n模式: 自然语言输入自动识别意图（修复=debug, 解释=ask, 设计=plan, 其他=code）',
-            'Commands: /quit exit · /clear clear · /mode switch mode · /config\nModes: Natural language input auto-classifies intent'
+            '命令: /quit 退出 · /clear 清屏 · /mode 切换模式 · /stats 用量统计 · /config 配置\n模式: 自然语言输入自动识别意图（修复=debug, 解释=ask, 设计=plan, 其他=code）',
+            'Commands: /quit exit · /clear clear · /mode switch mode · /stats usage · /config'
           ),
           timestamp: Date.now(),
         })
+        continue
+      }
+      if (cmd === 'stats') {
+        state.messages.push({ role: 'system', content: analytics.getDetailedReport().join('\n'), timestamp: Date.now() })
         continue
       }
       if (cmd === 'mode') {

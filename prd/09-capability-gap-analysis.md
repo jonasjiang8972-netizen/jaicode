@@ -26,6 +26,7 @@
 | **直接写文件** | AI 只能生成 diff 建议，不能直接修改 | 内置 Skill: file-writer |
 | **执行 Shell 命令** | AI 说"可以运行 xxx"但实际无法执行 | 内置 Skill: shell-executor |
 | **错误捕获与重试** | Debug 模式无法自动运行测试验证 | 整合到 Debug 模式核心 |
+| **使用量统计分析** | 无法追踪 Token 消耗与费用 | 内置 Analytics 模块，状态栏实时展示 |
 
 ### P1 — 短期补足（1-2 个迭代）
 
