@@ -18,7 +18,7 @@ import { Analytics } from './analytics.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.9.5'
+const VERSION = '0.10.0'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
@@ -34,8 +34,10 @@ import { filterInput } from './security/input-filter.js'
 import { filterOutput } from './security/output-filter.js'
 import { handleError, formatError } from './errors/error-handler.js'
 import { metrics } from './observability/metrics.js'
-import { detectImagePaths, validateImage, readImageBase64, getMimeType } from './multimodal/image-handler.js'
+import { handleFile, detectFilePaths } from './filesystem/file-handler.js'
+import { readClipboardImage } from './filesystem/clipboard-monitor.js'
 import { loadHistory, saveToHistory, autocomplete } from './input/history.js'
+import { detectImagePaths, validateImage, readImageBase64, getMimeType } from './multimodal/image-handler.js'
 
 // ─── P1: Intent & Memory ──────────────────────────────
 import { classifyIntent } from './intent/classifier.js'
@@ -876,8 +878,8 @@ async function main() {
         state.messages.push({
           role: 'system',
           content: t(
-            '命令: /quit · /clear · /mode · /stats · /config · /read <文件> · /exec <命令> · /audit · /caps · /fix <能力>',
-            'Commands: /quit · /clear · /mode · /stats · /config · /read <f> · /exec <cmd> · /audit · /caps · /fix <cap>'
+            '命令: /quit · /clear · /mode · /stats · /config · /read <文件> · /exec <命令> · /audit · /caps · /fix <能力> · /paste（剪贴板图片）',
+            'Commands: /quit · /clear · /mode · /stats · /config · /read <f> · /exec <cmd> · /audit · /caps · /fix <cap> · /paste (clipboard)'
           ),
           timestamp: Date.now(),
         })
@@ -1012,6 +1014,66 @@ async function main() {
       })
       continue
     }
+
+    // ─── File Path Detection ────────────────────────────
+    const detectedPaths = detectFilePaths(input)
+    for (const filePath of detectedPaths) {
+      const fileResult = handleFile(filePath, state.cwd)
+      if (fileResult.error) {
+        state.messages.push({ role: 'system', content: `⚠️ ${filePath}: ${fileResult.error}`, timestamp: Date.now() })
+      } else if (fileResult.type === 'text') {
+        state.messages.push({
+          role: 'system',
+          content: `📄 ${filePath} (${fileResult.language}, ${fileResult.lines} lines)${fileResult.truncated ? ' [truncated]' : ''}:\n\`\`\`${fileResult.language}\n${fileResult.content}\n\`\`\``,
+          timestamp: Date.now(),
+        })
+      } else if (fileResult.type === 'image') {
+        state.messages.push({
+          role: 'system',
+          content: `🖼️ ${filePath} detected (${(fileResult.size / 1024).toFixed(1)}KB). Image analysis requires VL provider.`,
+          timestamp: Date.now(),
+        })
+      } else if (fileResult.type === 'rejected') {
+        state.messages.push({
+          role: 'system',
+          content: `⛔ ${filePath}: ${fileResult.reason}`,
+          timestamp: Date.now(),
+        })
+      } else if (fileResult.type === 'archive') {
+        state.messages.push({
+          role: 'system',
+          content: `📦 ${filePath}: ${fileResult.description}`,
+          timestamp: Date.now(),
+        })
+      }
+      continue
+    }
+
+    // ─── Clipboard Image Detection ──────────────────────
+    if (input.toLowerCase() === '/paste' || input.toLowerCase() === '/clip') {
+      const imgPath = readClipboardImage()
+      if (imgPath) {
+        const fileResult = handleFile(imgPath, state.cwd)
+        if (fileResult.type === 'image') {
+          state.messages.push({
+            role: 'system',
+            content: `🖼️ Clipboard image detected (${(fileResult.size / 1024).toFixed(1)}KB). Sending to VL analysis...`,
+            timestamp: Date.now(),
+          })
+          // TODO: Send to VL provider when available
+        }
+      } else {
+        state.messages.push({
+          role: 'system',
+          content: t('剪贴板中未检测到图片', 'No image found in clipboard'),
+          timestamp: Date.now(),
+        })
+      }
+      continue
+    }
+
+    // Save input to history
+    saveToHistory(input)
 
     // Process natural language input
     await processMessage(input)
