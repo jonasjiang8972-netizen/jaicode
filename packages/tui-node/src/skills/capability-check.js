@@ -70,17 +70,8 @@ const CAPABILITY_REGISTRY = [
 export class CapabilityManager {
   /** Run full capability audit */
   static audit() {
-    // Update statuses based on real checks
-    const caps = JSON.parse(JSON.stringify(CAPABILITY_REGISTRY))
-
-    // Check each capability
-    for (const cap of caps) {
-      if (cap.id === 'cap-file-read') cap.status = 'available'
-      else if (cap.id === 'cap-shell-exec') cap.status = 'partial'
-      else cap.status = 'missing'
-    }
-
-    return caps
+    // Return registry with current statuses (already correct in registry)
+    return JSON.parse(JSON.stringify(CAPABILITY_REGISTRY))
   }
 
   /** Print audit report */
