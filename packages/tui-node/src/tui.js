@@ -18,7 +18,7 @@ import { Analytics } from './analytics.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.11.0'
+const VERSION = '0.12.0'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
@@ -37,6 +37,7 @@ import { metrics } from './observability/metrics.js'
 import { handleFile, detectFilePaths } from './filesystem/file-handler.js'
 import { readClipboardImage } from './filesystem/clipboard-monitor.js'
 import { loadHistory, saveToHistory, autocomplete } from './input/history.js'
+import { loadConstitution, saveUserConstitution, getConstitutionInfo } from './constitution.js'
 import { detectImagePaths, validateImage, readImageBase64, getMimeType } from './multimodal/image-handler.js'
 
 // ─── P1: Intent & Memory ──────────────────────────────
@@ -393,6 +394,20 @@ async function callLLM(messages) {
   const apiKey = providerCfg.apiKey
   const model = providerCfg.model || providerCfg.defaultModel || 'claude-sonnet-4-20250514'
 
+  // Inject constitution as the first system message
+  const constitution = loadConstitution({
+    VERSION: '0.11.0',
+    MODE: state.mode,
+    LANGUAGE: state.lang === 'zh' ? 'Chinese' : 'English',
+    PROJECT_CONTEXT: state.projectSummary || 'No project scan available',
+    USER_PREFERENCES: JSON.stringify(loadUserProfile().outputPreferences || {}),
+  })
+
+  // Prepend constitution to messages if not already present
+  if (messages.length === 0 || messages[0].role !== 'system' || !messages[0].content.includes('Jaicode Constitution')) {
+    messages.unshift({ role: 'system', content: constitution })
+  }
+
   const modePrompts = {
     plan: t('你是一个架构设计专家。生成架构决策记录（ADR）。',
             'You are an architecture design expert. Generate ADRs.'),
@@ -621,25 +636,31 @@ async function processMessage(userInput) {
     state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
 
     const modePrompts = {
-      plan: `你是 Jaicode 架构设计专家。
-重要：你具备直接操作终端的能力。你可以：
-- 读取项目文件了解现状
-- 分析技术选型并给出 ADR
-- 建议具体可执行的命令
-不要说"我无法执行"，直接给出操作步骤和命令。`,
-      code: `你是 Jaicode 编程助手。具备完整的终端命令执行能力。
-当用户提出编码需求时，直接给出可以执行的具体命令和代码变更。
-你可以：读文件、写文件、修改代码、执行 shell 命令、安装依赖、运行测试。
-输出格式：先给出说明，然后给出准确命令和 diff。
-绝对不要说"我无法执行"——你就是执行者。`,
-      debug: `你是 Jaicode 调试助手。具备完整的终端命令执行能力。
-当用户报告错误时，直接执行排查和修复：
-- 分析错误原因
-- 给出修复方案（diff 格式）
-- 提供验证命令
-绝对不要说"我无法执行命令"。`,
-      ask: `你是 Jaicode 问答助手。简洁、准确地回答技术问题。
-如果问题需要通过命令排查，直接给出可以执行的命令。`,
+      plan: `You are Jaicode (v${VERSION}), an architecture design expert.
+You run inside a terminal TUI application.
+Important: You have direct terminal access. You can:
+- Read project files to understand the current state
+- Analyze technical choices and generate ADRs
+- Suggest specific executable commands
+Do NOT say "I cannot execute". Give actionable steps and commands.
+Always respond in the user's language preference.`,
+      code: `You are Jaicode (v${VERSION}), a coding assistant with full terminal access.
+When the user requests code changes, give specific commands and code diffs.
+You can: read files, write files, modify code, run shell commands, install deps, run tests.
+Output format: explanation first, then exact commands and diffs.
+NEVER say "I cannot execute" — you ARE the executor.
+Always respond in the user's language preference.`,
+      debug: `You are Jaicode (v${VERSION}), a debugging assistant with full terminal access.
+When the user reports errors, perform troubleshooting and fixes:
+- Analyze error causes
+- Provide fixes in diff format
+- Give verification commands
+NEVER say "I cannot execute commands".
+Always respond in the user's language preference.`,
+      ask: `You are Jaicode (v${VERSION}), a concise Q&A assistant.
+Answer questions directly and accurately.
+If a question requires command execution, provide the exact commands.
+Always respond in the user's language preference.`,
     }
     const langNote = state.lang === 'zh' ? '用中文回复。' : 'Reply in English.'
 
@@ -940,8 +961,8 @@ async function main() {
         state.messages.push({
           role: 'system',
           content: t(
-            '命令: /quit · /clear · /mode · /stats · /config · /read <文件> · /exec <命令> · /audit · /caps · /fix <能力> · /paste · /git · /hooks · /mcp · /update · /sessions',
-            'Commands: /quit · /clear · /mode · /stats · · /config · /read <f> · /exec <cmd> · /audit · /caps · /fix <cap> · /paste · /git · /hooks · /mcp · /update · /sessions'
+            '命令: /quit · /clear · /mode · /stats · /config · /read <文件> · /exec <命令> · /audit · · /caps · /constitution · /fix <能力> · /paste · /git · /hooks · /mcp · · /update · /sessions',
+            'Commands: /quit · /clear · /mode · /stats · /config · /read <f> · /exec <cmd> · /audit · caps · constitution · /fix <cap> · /paste · /git · /hooks · /mcp · /update · /sessions'
           ),
           timestamp: Date.now(),
         })
@@ -1038,6 +1059,16 @@ async function main() {
         const caps = CapabilityManager.audit()
         const report = CapabilityManager.printAudit(caps)
         state.messages.push({ role: 'system', content: report.join('\n'), timestamp: Date.now() })
+        continue
+      }
+      if (cmd === 'constitution') {
+        const info = getConstitutionInfo()
+        const lines = info.map(l => `[${l.scope}] ${l.path} ${l.exists ? '✓' : '✗'}`)
+        state.messages.push({
+          role: 'system',
+          content: `Jaicode Constitution:\n${lines.join('\n')}\n\nUse /constitution edit to modify.`,
+          timestamp: Date.now(),
+        })
         continue
       }
       if (cmd === 'fix') {
