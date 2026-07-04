@@ -18,7 +18,7 @@ import { Analytics } from './analytics.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.10.0'
+const VERSION = '0.11.0'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
@@ -44,6 +44,13 @@ import { classifyIntent } from './intent/classifier.js'
 import { saveSessionMessage, loadRecentContext, compressOldSessions, getContextWindow } from './memory/session-memory.js'
 import { loadProjectMemory, saveProjectMemory, autoScanProject, loadUserProfile, saveUserProfile } from './memory/project-memory.js'
 import { checkFreshness, getFreshnessPromptModifier, KNOWLEDGE_CUTOFF } from './knowledge/freshness-check.js'
+import { parseFileBlocks, computeDiff, formatDiff, applyDiff, writeFile, BACKUP_DIR } from './filesystem/file-writer.js'
+import { saveSession, listSessions, restoreSession, cleanSession, cleanStaleSessions } from './session-manager.js'
+import { checkForUpdate, selfUpgrade } from './auto-update.js'
+import { gitStatus, gitDiff, gitCommit, gitBranch, gitCreateBranch, gitLog, gitCreatePR, isGitRepo } from './git/git-ops.js'
+import { countSessionTokens, compactMessages, shouldCompact } from './memory/context-compact.js'
+import { loadHooks, addHook, removeHook, executeHooks } from './hooks/hooks-system.js'
+import { loadMCPServers, MCPClient } from './mcp/mcp-client.js'
 
 // ─── Auth ───────────────────────────────────────────────
 const auth = new Authorization()
@@ -84,6 +91,7 @@ const state = {
   isStreaming: false,
   isProcessing: false,
   projectSummary: '',
+  pendingFile: null,
 }
 
 // ─── Helpers ───────────────────────────────────────────
@@ -705,6 +713,34 @@ async function processMessage(userInput) {
       // Save assistant response to session memory (use safe response)
       saveSessionMessage({ role: 'assistant', content: safeResponse })
 
+      // ─── P0-1: File write from AI response ──────
+      const fileBlocks = parseFileBlocks(safeResponse)
+      if (fileBlocks.length > 0) {
+        for (const file of fileBlocks) {
+          const filePath = file.path
+          let oldContent = ''
+          try { oldContent = fs.readFileSync(path.join(state.cwd, filePath), 'utf-8') } catch {}
+
+          if (file.format === 'block') {
+            // Full file replacement
+            const diff = computeDiff(oldContent, file.content, filePath)
+            const diffText = formatDiff(filePath, diff)
+            state.messages.push({
+              role: 'system',
+              content: `${c.yellow('[Write]')} ${filePath}\n${c.dim('Changes:')} +${diff.reduce((a, h) => a + h.lines.filter(l => l.startsWith('+')).length, 0)} -${diff.reduce((a, h) => a + h.lines.filter(l => l.startsWith('-')).length, 0)}`,
+              timestamp: Date.now(),
+            })
+            // Confirm with user
+            state.messages.push({
+              role: 'system',
+              content: 'Apply this change? [y/N] ',
+              timestamp: Date.now(),
+            })
+            state.pendingFile = { path: filePath, content: file.content }
+          }
+        }
+      }
+
       if (!safeResponse || safeResponse.trim().length === 0) {
         thinking.push(`[${t('响应为空', 'Empty')}] ${t('对方返回空内容', 'Empty response received')}`)
         state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
@@ -722,6 +758,22 @@ async function processMessage(userInput) {
   }
 
   state.isProcessing = false
+
+  // Auto-save session
+  saveSession(state)
+
+  // Context compaction check
+  if (shouldCompact(state.messages)) {
+    const { messages, compacted, tokens } = compactMessages(state.messages)
+    if (compacted) {
+      state.messages = messages
+      state.messages.push({
+        role: 'system',
+        content: `[Context compacted: ${tokens} tokens remaining]`,
+        timestamp: Date.now(),
+      })
+    }
+  }
 }
 
 async function main() {
@@ -852,7 +904,17 @@ async function main() {
   } catch { /* ignore */ }
 
   // Clean up old sessions on startup
-  compressOldSessions()
+  cleanStaleSessions()
+
+  // Auto-update check (background)
+  const updateCheck = await checkForUpdate()
+  if (updateCheck.hasUpdate && !updateCheck.cached) {
+    state.messages.push({
+      role: 'system',
+      content: `⬡ Update available: v${updateCheck.latestVersion} (current: v${updateCheck.currentVersion}). Run /update to apply.`,
+      timestamp: Date.now(),
+    })
+  }
 
   // Chat loop
   hideCursor()
@@ -878,8 +940,8 @@ async function main() {
         state.messages.push({
           role: 'system',
           content: t(
-            '命令: /quit · /clear · /mode · /stats · /config · /read <文件> · /exec <命令> · /audit · /caps · /fix <能力> · /paste（剪贴板图片）',
-            'Commands: /quit · /clear · /mode · /stats · /config · /read <f> · /exec <cmd> · /audit · /caps · /fix <cap> · /paste (clipboard)'
+            '命令: /quit · /clear · /mode · /stats · /config · /read <文件> · /exec <命令> · /audit · /caps · /fix <能力> · /paste · /git · /hooks · /mcp · /update · /sessions',
+            'Commands: /quit · /clear · /mode · /stats · · /config · /read <f> · /exec <cmd> · /audit · /caps · /fix <cap> · /paste · /git · /hooks · /mcp · /update · /sessions'
           ),
           timestamp: Date.now(),
         })
@@ -1007,12 +1069,138 @@ async function main() {
         continue
       }
 
-      state.messages.push({
-        role: 'system',
-        content: t(`未知命令: /${cmd}（输入 /help 查看帮助）`, `Unknown command: /${cmd} (type /help for help)`),
-        timestamp: Date.now(),
-      })
-      continue
+      // ─── Git Commands ──────────────────────────────
+      if (cmd === 'git' || cmd.startsWith('git ')) {
+        const gitArgs = cmd === 'git' ? '' : cmd.slice(4).trim()
+        if (!gitArgs || gitArgs === 'status') {
+          const status = gitStatus(state.cwd)
+          if (status.error) {
+            state.messages.push({ role: 'system', content: `Git: ${status.error}`, timestamp: Date.now() })
+          } else if (status.clean) {
+            state.messages.push({ role: 'system', content: '✓ Git: Working directory clean', timestamp: Date.now() })
+          } else {
+            const lines = status.files.map(f => `${f.status} ${f.path}`)
+            state.messages.push({ role: 'system', content: `Git status (${status.count} files):\n${lines.join('\n')}`, timestamp: Date.now() })
+          }
+        } else if (gitArgs === 'log') {
+          const log = gitLog(state.cwd)
+          state.messages.push({ role: 'system', content: `Git log:\n${log.commits?.join('\n') || log.error}`, timestamp: Date.now() })
+        } else if (gitArgs === 'branch') {
+          const branch = gitBranch(state.cwd)
+          state.messages.push({ role: 'system', content: `Current: ${branch.current}\nAll: ${branch.branches?.join(', ') || branch.error}`, timestamp: Date.now() })
+        } else if (gitArgs.startsWith('commit')) {
+          const msgArgs = gitArgs.slice(6).trim()
+          if (!msgArgs) {
+            state.messages.push({ role: 'system', content: 'Usage: /git commit <message>', timestamp: Date.now() })
+          } else {
+            const result = gitCommit(state.cwd, msgArgs)
+            state.messages.push({ role: 'system', content: result.success ? `✓ Committed: ${msgArgs}` : `✗ ${result.error}`, timestamp: Date.now() })
+          }
+        } else if (gitArgs.startsWith('branch ') && gitArgs.length > 7) {
+          const branchName = gitArgs.slice(7).trim()
+          const result = gitCreateBranch(state.cwd, branchName)
+          state.messages.push({ role: 'system', content: result.success ? `✓ Created branch: ${branchName}` : `✗ ${result.error}`, timestamp: Date.now() })
+        } else {
+          state.messages.push({ role: 'system', content: 'Git commands: status, log, branch, commit <msg>, branch <name>', timestamp: Date.now() })
+        }
+        continue
+      }
+
+      // ─── Hooks Commands ─────────────────────────────
+      if (cmd === 'hooks' || cmd.startsWith('hooks ')) {
+        const hookArgs = cmd === 'hooks' ? '' : cmd.slice(6).trim()
+        if (!hookArgs) {
+          const hooks = loadHooks()
+          const lines = []
+          for (const [event, cmds] of Object.entries(hooks)) {
+            if (cmds.length > 0) lines.push(`${event}: ${cmds.join(', ')}`)
+          }
+          state.messages.push({ role: 'system', content: lines.length > 0 ? `Hooks:\n${lines.join('\n')}` : 'No hooks configured.', timestamp: Date.now() })
+        } else if (hookArgs.startsWith('add ')) {
+          // hooks add post-edit "prettier --write"
+          const match = hookArgs.slice(4).match(/^(\w+)\s+"(.+)"$/)
+          if (match) {
+            addHook(match[1], match[2])
+            state.messages.push({ role: 'system', content: `✓ Hook added: ${match[1]} → ${match[2]}`, timestamp: Date.now() })
+          } else {
+            state.messages.push({ role: 'system', content: 'Usage: /hooks add <event> "<command>"', timestamp: Date.now() })
+          }
+        } else if (hookArgs === 'test') {
+          const results = executeHooks('session-start', state.cwd, { mode: state.mode })
+          state.messages.push({ role: 'system', content: `Hooks executed: ${results.length}`, timestamp: Date.now() })
+        }
+        continue
+      }
+
+      // ─── MCP Commands ───────────────────────────────
+      if (cmd === 'mcp' || cmd.startsWith('mcp ')) {
+        const mcpArgs = cmd === 'mcp' ? '' : cmd.slice(4).trim()
+        if (!mcpArgs) {
+          const servers = loadMCPServers()
+          if (servers.length === 0) {
+            state.messages.push({ role: 'system', content: 'No MCP servers configured. Use: /mcp add <name> <command>', timestamp: Date.now() })
+          } else {
+            state.messages.push({ role: 'system', content: `MCP servers: ${servers.map(s => `${s.name} (${s.command})`).join(', ')}`, timestamp: Date.now() })
+          }
+        } else if (mcpArgs.startsWith('add ')) {
+          const parts = mcpArgs.slice(4).split(' ')
+          if (parts.length >= 2) {
+            const name = parts[0]
+            const command = parts.slice(1).join(' ')
+            saveMCPServer(name, { command })
+            state.messages.push({ role: 'system', content: `✓ MCP server added: ${name}`, timestamp: Date.now() })
+          }
+        } else if (mcpArgs.startsWith('connect ')) {
+          const name = mcpArgs.slice(8).trim()
+          const servers = loadMCPServers()
+          const server = servers.find(s => s.name === name)
+          if (server) {
+            const client = new MCPClient(server)
+            try {
+              const result = await client.connect()
+              state.messages.push({ role: 'system', content: `✓ Connected to ${name}: ${result.tools?.length || 0} tools available`, timestamp: Date.now() })
+            } catch (e) {
+              state.messages.push({ role: 'system', content: `✗ Connection failed: ${e.message}`, timestamp: Date.now() })
+            }
+          } else {
+            state.messages.push({ role: 'system', content: `Server not found: ${name}`, timestamp: Date.now() })
+          }
+        }
+        continue
+      }
+
+      // ─── Update Command ─────────────────────────────
+      if (cmd === 'update') {
+        state.messages.push({ role: 'system', content: 'Checking for updates...', timestamp: Date.now() })
+        const update = await checkForUpdate()
+        if (update.hasUpdate) {
+          state.messages.push({
+            role: 'system',
+            content: `Update available: ${update.currentVersion} → ${update.latestVersion}\nRun /update apply`,
+            timestamp: Date.now(),
+          })
+        } else {
+          state.messages.push({ role: 'system', content: `✓ Up to date (v${update.currentVersion})`, timestamp: Date.now() })
+        }
+        continue
+      }
+      if (cmd === 'update apply') {
+        const result = await selfUpgrade()
+        state.messages.push({ role: 'system', content: result.success ? '✓ Updated. Please restart.' : `✗ ${result.error}`, timestamp: Date.now() })
+        continue
+      }
+
+      // ─── Session Restore ────────────────────────────
+      if (cmd === 'sessions') {
+        const sessions = listSessions()
+        if (sessions.length === 0) {
+          state.messages.push({ role: 'system', content: 'No previous sessions found.', timestamp: Date.now() })
+        } else {
+          const lines = sessions.map(s => `[${s.pid}] ${s.cwd} (${s.messages?.length || 0} msgs) ${s.active ? '●' : '○'}`)
+          state.messages.push({ role: 'system', content: `Sessions:\n${lines.join('\n')}`, timestamp: Date.now() })
+        }
+        continue
+      }
     }
 
     // ─── File Path Detection ────────────────────────────
@@ -1074,6 +1262,34 @@ async function main() {
 
     // Save input to history
     saveToHistory(input)
+
+    // ─── P0-1: File write confirmation ──────────
+    if (state.pendingFile) {
+      if (input.trim().toLowerCase() === 'y' || input.trim().toLowerCase() === 'yes') {
+        const result = writeFile(state.cwd, state.pendingFile.path, state.pendingFile.content)
+        if (result.success) {
+          state.messages.push({
+            role: 'system',
+            content: `✓ Written: ${result.path} (${result.size} bytes)`,
+            timestamp: Date.now(),
+          })
+        } else {
+          state.messages.push({
+            role: 'system',
+            content: `✗ Write failed: ${result.error}`,
+            timestamp: Date.now(),
+          })
+        }
+      } else {
+        state.messages.push({
+          role: 'system',
+          content: 'Write cancelled.',
+          timestamp: Date.now(),
+        })
+      }
+      state.pendingFile = null
+      continue
+    }
 
     // Process natural language input
     await processMessage(input)
