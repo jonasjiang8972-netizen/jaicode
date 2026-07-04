@@ -18,7 +18,7 @@ import { Analytics } from './analytics.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.7.4'
+const VERSION = '0.8.0'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
@@ -30,6 +30,12 @@ const analytics = new Analytics()
 import { scanProject, buildProjectSummary, buildFileContext, readFile } from './skills/file-reader.js'
 import { CapabilityManager } from './skills/capability-check.js'
 import { Authorization, AuditLogger } from './auth/authorization.js'
+
+// ─── P1: Intent & Memory ──────────────────────────────
+import { classifyIntent } from './intent/classifier.js'
+import { saveSessionMessage, loadRecentContext, compressOldSessions, getContextWindow } from './memory/session-memory.js'
+import { loadProjectMemory, saveProjectMemory, autoScanProject, loadUserProfile, saveUserProfile } from './memory/project-memory.js'
+import { checkFreshness, getFreshnessPromptModifier, KNOWLEDGE_CUTOFF } from './knowledge/freshness-check.js'
 
 // ─── Auth ───────────────────────────────────────────────
 const auth = new Authorization()
@@ -121,16 +127,7 @@ function saveAPIKey(key) {
   fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2))
 }
 
-function classifyIntent(input) {
-  const lower = input.toLowerCase()
-  // 检测执行意图
-  if (/^(执行|运行|run|exec|部署|deploy|安装|install|启动|start|构建|build|测试|test)/.test(lower)) return 'code'
-  if (/^(解释|explain|what|how|为什么|why|描述|describe|是什么)/.test(lower)) return 'ask'
-  if (/^(修复|fix|debug|bug|报错|错误|not work|broken|test failed)/.test(lower)) return 'debug'
-  if (/^(设计|design|架构|architecture|方案|plan for|规划)/.test(lower)) return 'plan'
-  if (/^(批量|batch|所有|all files|refactor all)/.test(lower)) return 'plan'
-  return 'code'
-}
+// ─── Legacy classifier (replaced by intent/classifier.js) ──
 
 async function validateAPIKey(providerCfg) {
   try {
@@ -538,9 +535,15 @@ async function processMessage(userInput) {
     timestamp: Date.now(),
   })
 
-  // Auto-classify intent
-  const intent = state.mode === 'auto' ? classifyIntent(userInput) : state.mode
-  thinking.push(`[${t('意图识别', 'Intent')}] ${intent.toUpperCase()}`)
+  // Save to session memory
+  saveSessionMessage({ role: 'user', content: userInput })
+
+  // Auto-classify intent (async, with LLM fallback)
+  const intentResult = state.mode === 'auto'
+    ? await classifyIntent(userInput, callLLM)
+    : { mode: state.mode, confidence: 1.0 }
+  const intent = intentResult.mode
+  thinking.push(`[${t('意图识别', 'Intent')}] ${intent.toUpperCase()} (${Math.round(intentResult.confidence * 100)}%)`)
 
   // Show thinking + animate mascot
   jai.setState('thinking')
@@ -597,12 +600,24 @@ async function processMessage(userInput) {
 如果问题需要通过命令排查，直接给出可以执行的命令。`,
     }
     const langNote = state.lang === 'zh' ? '用中文回复。' : 'Reply in English.'
-    const skillsNote = state.lang === 'zh'
-      ? '\n\n你可以使用以下能力：\n- 读文件: 自动读取用户提到的文件路径\n- 写文件: 使用 diff 格式输出变更\n- 执行命令: 给出具体可执行的命令\n\n当前项目文件结构:\n' + (state.projectSummary || '(未扫描)')
-      : '\n\nSkills available:\n- Read files: paths you mention are auto-included\n- Write files: use diff format for changes\n- Execute commands: provide runnable commands\n\nProject files:\n' + (state.projectSummary || '(not scanned)')
+
+    // Load project memory for context
+    const projectMem = loadProjectMemory(state.cwd) || autoScanProject(state.cwd)
+    saveProjectMemory(state.cwd, projectMem)
+
+    const projectContext = state.lang === 'zh'
+      ? `\n\n当前项目信息:\n- 名称: ${projectMem.project.name || '未知'}\n- 技术栈: ${(projectMem.project.techStack || []).join(', ')}\n- 目录: ${(projectMem.project.directories || []).slice(0, 8).join(', ')}`
+      : `\n\nProject context:\n- Name: ${projectMem.project.name || 'unknown'}\n- Stack: ${(projectMem.project.techStack || []).join(', ')}\n- Dirs: ${(projectMem.project.directories || []).slice(0, 8).join(', ')}`
+
+    // Knowledge freshness check
+    const freshnessNote = getFreshnessPromptModifier(userInput)
+
+    // Load session context (recent conversation history)
+    const sessionContext = getContextWindow()
 
     const messages = [
-      { role: 'system', content: `${modePrompts[intent] || modePrompts.code} ${langNote}${skillsNote}` },
+      { role: 'system', content: `${modePrompts[intent] || modePrompts.code} ${langNote}${projectContext}${freshnessNote}` },
+      ...sessionContext.map(m => ({ role: m.role, content: m.content })),
       ...state.messages
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .map(m => ({ role: m.role, content: m.content })),
@@ -636,7 +651,6 @@ async function processMessage(userInput) {
 
       // Start async thinking redraw during streaming
       const redrawTimer = setInterval(() => {
-        // Move cursor up and redraw thinking area to show live updates
         if (state.messages[thinkingIdx]) {
           const content = state.messages[thinkingIdx].content
           const lastLine = content.split('\n').pop()
@@ -650,18 +664,16 @@ async function processMessage(userInput) {
       clearInterval(redrawTimer)
       jai.setState('idle')
 
+      // Save assistant response to session memory
+      saveSessionMessage({ role: 'assistant', content: response })
+
       if (!response || response.trim().length === 0) {
         thinking.push(`[${t('响应为空', 'Empty')}] ${t('对方返回空内容', 'Empty response received')}`)
         state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
-        analytics.recordRequest(state.model || 'unknown', 0, 0, Date.now() - startTime, true)
-        state.messages.push({ role: 'assistant', content: `⚠️ ${t('模型返回空内容，请检查 API Key 或模型名称', 'Model empty. Check API key or model.')}`, timestamp: Date.now(), processingTime: Date.now() - startTime })
+        state.messages.push({ role: 'assistant', content: `⚠️ ${t('模型返回空内容，请检查 API Key 或模型名称', 'Model returned empty response. Check API key or model.')}`, timestamp: Date.now(), processingTime: Date.now() - startTime })
       } else {
         thinking.push(`[${t('完成', 'Done')}] ${t('响应长度', 'Response')}: ${response.length} chars`)
         state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
-        // Record analytics: estimate tokens (rough: chars/4 input for prompt, chars/3 for output)
-        const promptTokens = Math.ceil(userInput.length / 4)
-        const outputTokens = Math.ceil(response.length / 3)
-        analytics.recordRequest(state.model || 'unknown', promptTokens, outputTokens, Date.now() - startTime, false)
         state.messages.push({ role: 'assistant', content: response, timestamp: Date.now(), processingTime: Date.now() - startTime })
       }
     }
@@ -800,6 +812,9 @@ async function main() {
       }, null, 2))
     }
   } catch { /* ignore */ }
+
+  // Clean up old sessions on startup
+  compressOldSessions()
 
   // Chat loop
   hideCursor()
