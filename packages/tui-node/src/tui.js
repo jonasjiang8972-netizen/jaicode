@@ -18,7 +18,7 @@ import { Analytics } from './analytics.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.7.1'
+const VERSION = '0.7.4'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
@@ -208,9 +208,9 @@ function renderStartup() {
   const orange = chalk.hex('#FF8C00')
 
   // Build the wordmark block
-  // Logo block (fixed position, no color codes affecting width)
-  const logoBlock = [
-    '                        ',
+  // Logo block - vertically centered with mascot
+  const mascotHeight = mascotLines.length
+  const logoRaw = [
     '  ╔══════════════════╗  ',
     '  ║  ██  █████ ██    ║  ',
     '  ║  ██  ██    ██ ██ ║  ',
@@ -220,6 +220,14 @@ function renderStartup() {
     '  ╚══════════════════╝  ',
     '  v' + VERSION + '              ',
     '  Local-first AI Agent  ',
+  ]
+  // Center logo vertically relative to mascot
+  const padTop = Math.max(0, Math.floor((mascotHeight - logoRaw.length) / 2))
+  const padBottom = Math.max(0, mascotHeight - logoRaw.length - padTop)
+  const logoBlock = [
+    ...Array(padTop).fill('                        '),
+    ...logoRaw,
+    ...Array(padBottom).fill('                        '),
   ]
 
   // Render mascot + logo side by side
