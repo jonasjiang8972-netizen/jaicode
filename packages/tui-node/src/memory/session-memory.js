@@ -21,6 +21,18 @@ function ensureDir() {
   fs.mkdirSync(SESSIONS_DIR, { recursive: true })
 }
 
+// ─── Privacy Sanitization ──────────────────────────────
+function sanitize(text) {
+  if (!text) return text
+  return text
+    .replace(/\b(sk|ak|pk)-[a-zA-Z0-9]{32,}\b/gi, '[API_KEY_REDACTED]')
+    .replace(/\b1[3-9]\d{9}\b/g, '[PHONE_REDACTED]')
+    .replace(/\b\d{17}[\dXx]\b/g, '[ID_REDACTED]')
+    .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g, '[EMAIL_REDACTED]')
+    .replace(/password\s*[=:]\s*\S+/gi, 'password=[REDACTED]')
+    .slice(0, 2000)
+}
+
 // ─── Save ─────────────────────────────────────────────
 export function saveSessionMessage(message) {
   try {
@@ -28,7 +40,7 @@ export function saveSessionMessage(message) {
     const file = getSessionFile()
     const entry = JSON.stringify({
       role: message.role,
-      content: message.content.slice(0, 2000), // truncate long messages
+      content: sanitize(message.content),
       ts: Date.now(),
     })
     fs.appendFileSync(file, entry + '\n')

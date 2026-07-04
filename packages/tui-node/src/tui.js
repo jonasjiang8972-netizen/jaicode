@@ -18,7 +18,7 @@ import { Analytics } from './analytics.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.8.0'
+const VERSION = '0.9.0'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
@@ -30,6 +30,12 @@ const analytics = new Analytics()
 import { scanProject, buildProjectSummary, buildFileContext, readFile } from './skills/file-reader.js'
 import { CapabilityManager } from './skills/capability-check.js'
 import { Authorization, AuditLogger } from './auth/authorization.js'
+import { filterInput } from './security/input-filter.js'
+import { filterOutput } from './security/output-filter.js'
+import { handleError, formatError } from './errors/error-handler.js'
+import { metrics } from './observability/metrics.js'
+import { detectImagePaths, validateImage, readImageBase64, getMimeType } from './multimodal/image-handler.js'
+import { loadHistory, saveToHistory, autocomplete } from './input/history.js'
 
 // ─── P1: Intent & Memory ──────────────────────────────
 import { classifyIntent } from './intent/classifier.js'
@@ -337,6 +343,15 @@ function renderSpinner(text) {
   }, 80)
 }
 
+// P3-4.3: Progress bar for long operations
+function renderProgressBar(current, total, text) {
+  const width = 30
+  const filled = Math.round((current / total) * width)
+  const bar = '█'.repeat(filled) + '░'.repeat(width - filled)
+  const pct = Math.round((current / total) * 100)
+  stdout.write(`\r  [${bar}] ${pct}% ${text}`)
+}
+
 // ─── API Endpoint Registry ─────────────────────────────
 const API_ENDPOINTS = {
   anthropic: { url: 'https://api.anthropic.com/v1/messages', auth: 'x-api-key', apiVersion: '2023-06-01', apiFormat: 'anthropic' },
@@ -528,15 +543,30 @@ async function processMessage(userInput) {
   const startTime = Date.now()
   const thinking = []
 
-  // Add user message
+  // P0-1.3: Input security filter
+  const inputCheck = filterInput(userInput)
+  if (inputCheck.blocked) {
+    state.messages.push({
+      role: 'system',
+      content: `⚠️ 输入被拦截: ${inputCheck.reason}`,
+      timestamp: Date.now(),
+    })
+    AuditLogger.log('input_blocked', 'L0', { reason: inputCheck.reason }, { allowed: false, reason: inputCheck.reason })
+    return
+  }
+
+  // Use cleaned input (with sensitive data redacted)
+  const cleanInput = inputCheck.clean
+
+  // Add user message (use cleaned input)
   state.messages.push({
     role: 'user',
-    content: userInput,
+    content: cleanInput,
     timestamp: Date.now(),
   })
 
-  // Save to session memory
-  saveSessionMessage({ role: 'user', content: userInput })
+  // Save to session memory (use cleaned input)
+  saveSessionMessage({ role: 'user', content: cleanInput })
 
   // Auto-classify intent (async, with LLM fallback)
   const intentResult = state.mode === 'auto'
@@ -664,17 +694,21 @@ async function processMessage(userInput) {
       clearInterval(redrawTimer)
       jai.setState('idle')
 
-      // Save assistant response to session memory
-      saveSessionMessage({ role: 'assistant', content: response })
+      // P0-1.2: Output security filter (redact sensitive data)
+      const outputCheck = filterOutput(response)
+      const safeResponse = outputCheck.clean
 
-      if (!response || response.trim().length === 0) {
+      // Save assistant response to session memory (use safe response)
+      saveSessionMessage({ role: 'assistant', content: safeResponse })
+
+      if (!safeResponse || safeResponse.trim().length === 0) {
         thinking.push(`[${t('响应为空', 'Empty')}] ${t('对方返回空内容', 'Empty response received')}`)
         state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
         state.messages.push({ role: 'assistant', content: `⚠️ ${t('模型返回空内容，请检查 API Key 或模型名称', 'Model returned empty response. Check API key or model.')}`, timestamp: Date.now(), processingTime: Date.now() - startTime })
       } else {
-        thinking.push(`[${t('完成', 'Done')}] ${t('响应长度', 'Response')}: ${response.length} chars`)
+        thinking.push(`[${t('完成', 'Done')}] ${t('响应长度', 'Response')}: ${safeResponse.length} chars`)
         state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
-        state.messages.push({ role: 'assistant', content: response, timestamp: Date.now(), processingTime: Date.now() - startTime })
+        state.messages.push({ role: 'assistant', content: safeResponse, timestamp: Date.now(), processingTime: Date.now() - startTime })
       }
     }
   } catch (e) {
