@@ -12,6 +12,7 @@
 | 6 | `06-interactive-tui.md` | PRD 补充：可交互终端界面（类 Claude Code） | 草稿 | 2026-07-04 |
 | 7 | `07-jai-builder-market.md` | 低代码工具 — 市场分析与产品定位 PRD | 草稿 | 2026-07-04 |
 | 9 | `09-capability-gap-analysis.md` | Jaicode 能力检验与差距分析 | 草稿 | 2026-07-04 |
+| 10 | `10-authorization-framework.md` | 授权能力框架 PRD | 草稿 | 2026-07-04 |
 
 ## 状态说明
 

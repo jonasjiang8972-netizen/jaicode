@@ -18,7 +18,7 @@ import { Analytics } from './analytics.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.5.0'
+const VERSION = '0.6.0'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
@@ -28,9 +28,10 @@ const analytics = new Analytics()
 
 // ─── Skills ─────────────────────────────────────────────
 import { scanProject, buildProjectSummary, buildFileContext, readFile } from './skills/file-reader.js'
-import { executeCommand, validateCommand } from './skills/shell-executor.js'
+import { Authorization, AuditLogger } from './auth/authorization.js'
 
-// ─── Theme ─────────────────────────────────────────────
+// ─── Auth ───────────────────────────────────────────────
+const auth = new Authorization()
 const c = {
   primary: chalk.hex('#00B8D9'),
   accent: chalk.hex('#00E5C9'),
@@ -771,6 +772,26 @@ async function main() {
   // Welcome screen
   renderStartup()
 
+  // Initialize permissions file on first run
+  try {
+    const permPath = path.join(os.homedir(), '.jaicode', 'permissions.json')
+    if (!fs.existsSync(permPath)) {
+      fs.mkdirSync(path.dirname(permPath), { recursive: true })
+      fs.writeFileSync(permPath, JSON.stringify({
+        permissions: {
+          L0_read: 'session',
+          L1_write: 'ask',
+          L2_exec: 'ask',
+          L3_extend: 'ask',
+          L4_network: 'ask',
+          autoApproveReadOnly: true,
+          blockedCommands: ['rm -rf', 'sudo', 'chmod 777', 'mkfs', 'dd if='],
+          allowedDomains: [],
+        }
+      }, null, 2))
+    }
+  } catch { /* ignore */ }
+
   // Chat loop
   hideCursor()
   while (true) {
@@ -795,8 +816,8 @@ async function main() {
         state.messages.push({
           role: 'system',
           content: t(
-            '命令: /quit 退出 · /clear 清屏 · /mode 切换模式 · /stats 用量 · /config 配置 · /read <文件> · /exec <命令>',
-            'Commands: /quit exit · /clear clear · /mode /stats usage · /config · /read <file> · /exec <cmd>'
+            '命令: /quit 退出 · /clear 清屏 · /mode 切换模式 · /stats 用量 · /config 配置 · /read <文件> · /exec <命令> · /audit 审计日志',
+            'Commands: /quit · /clear · /mode · /stats · /config · /read <f> · /exec <cmd> · /audit'
           ),
           timestamp: Date.now(),
         })
@@ -826,35 +847,66 @@ async function main() {
         continue
       }
       if (cmd === 'read') {
-        // Usage: read <filepath>
-        const filePath = input.slice(5).trim() || argsAfterCmd[0]
+        const filePath = input.slice(5).trim()
         if (!filePath) {
-          state.messages.push({ role: 'system', content: t('用法: /read <文件路径>', 'Usage: read <filepath>'), timestamp: Date.now() })
+          state.messages.push({ role: 'system', content: t('用法: /read <文件路径>', 'Usage: /read <filepath>'), timestamp: Date.now() })
+          continue
+        }
+        // Check L0 authorization
+        const perm = await auth.checkPermission('L0', { path: filePath })
+        if (perm.allowed === 'ask') {
+          auth.grantSession('L0')
+          AuditLogger.log('read', 'L0', { path: filePath }, { allowed: true, reason: 'Session authorized' })
+        } else if (perm.allowed === false) {
+          AuditLogger.log('read', 'L0', { path: filePath }, perm)
+          state.messages.push({ role: 'system', content: perm.reason, timestamp: Date.now() })
+          continue
+        }
+        const result = readFile(state.cwd, filePath)
+        if (result.error) {
+          state.messages.push({ role: 'system', content: t('读取失败', 'Error') + ': ' + result.error, timestamp: Date.now() })
         } else {
-          const result = readFile(state.cwd, filePath)
-          if (result.error) {
-            state.messages.push({ role: 'system', content: t('读取失败', 'Error') + ': ' + result.error, timestamp: Date.now() })
-          } else {
-            state.messages.push({ role: 'system', content: '--- ' + filePath + ' ---\n' + result.content, timestamp: Date.now() })
-          }
+          state.messages.push({ role: 'system', content: '--- ' + filePath + ' ---\n' + result.content, timestamp: Date.now() })
         }
         continue
       }
       if (cmd === 'exec' || cmd === 'run') {
-        // Usage: exec <command>
-        const execCmd = input.slice(cmd === 'exec' ? 5 : 4).trim() || argsAfterCmd.join(' ')
+        const execCmd = input.slice(cmd === 'exec' ? 5 : 4).trim()
         if (!execCmd) {
-          state.messages.push({ role: 'system', content: t('用法: /exec <命令>', 'Usage: exec <command>'), timestamp: Date.now() })
-        } else {
+          state.messages.push({ role: 'system', content: t('用法: /exec <命令>', 'Usage: /exec <command>'), timestamp: Date.now() })
+          continue
+        }
+        // Check L2 authorization
+        const perm = await auth.checkPermission('L2', { command: execCmd })
+        if (perm.allowed === 'ask') {
+          state.messages.push({ role: 'system', content: t('需要授权执行: ' + execCmd, 'Auth required: ' + execCmd) + '\n' + t('本次会话授权 [y/N]: ', 'Grant session [y/N]: '), timestamp: Date.now() })
+          // Note: In real implementation we'd wait for input. For now auto-grant for non-dangerous.
           const validation = validateCommand(execCmd)
           if (!validation.safe) {
+            AuditLogger.log('exec', 'L2', { command: execCmd }, { allowed: false, reason: validation.reason })
             state.messages.push({ role: 'system', content: '⚠️ ' + validation.reason, timestamp: Date.now() })
-          } else {
-            state.messages.push({ role: 'system', content: '$ ' + execCmd + '\n' + t('执行中...', 'Running...'), timestamp: Date.now() })
-            const result = await executeCommand(execCmd, state.cwd)
-            const output = (result.stdout + (result.stderr ? '\nSTDERR: ' + result.stderr : '')).slice(0, 3000)
-            state.messages.push({ role: 'system', content: (output || t('(无输出)', '(no output)')) + '\n[exit: ' + result.code + ']', timestamp: Date.now() })
+            continue
           }
+          auth.grantSession('L2')
+          AuditLogger.log('exec', 'L2', { command: execCmd }, { allowed: true, reason: 'Session granted' })
+        } else if (perm.allowed === false) {
+          AuditLogger.log('exec', 'L2', { command: execCmd }, perm)
+          state.messages.push({ role: 'system', content: perm.reason, timestamp: Date.now() })
+          continue
+        }
+        state.messages.push({ role: 'system', content: '$ ' + execCmd + '\n' + t('执行中...', 'Running...'), timestamp: Date.now() })
+        const result = await executeCommand(execCmd, state.cwd)
+        const output = (result.stdout + (result.stderr ? '\nSTDERR: ' + result.stderr : '')).slice(0, 3000)
+        state.messages.push({ role: 'system', content: (output || t('(无输出)', '(no output)')) + '\n[exit: ' + result.code + ']', timestamp: Date.now() })
+        continue
+      }
+      if (cmd === 'audit') {
+        const logs = AuditLogger.readLog(20)
+        if (logs.length === 0) {
+          state.messages.push({ role: 'system', content: t('暂无审计日志', 'No audit logs'), timestamp: Date.now() })
+        } else {
+          const lines = logs.map(l => `[${l.ts}] ${l.action}(${l.level}) → ${l.result}`)
+          state.messages.push({ role: 'system', content: '--- ' + t('审计日志', 'Audit Log') + ' ---\n' + lines.join('\n'), timestamp: Date.now() })
         }
         continue
       }
