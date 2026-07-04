@@ -15,6 +15,7 @@
 | 10 | `10-authorization-framework.md` | 授权能力框架 PRD | 草稿 | 2026-07-04 |
 | 11 | `11-optimization-roadmap.md` | 优化方案 V1（已废弃） | 废弃 | 2026-07-04 |
 | 12 | `12-optimization-detailed.md` | 优化方案 V2 — 持续优化版 | 草稿 | 2026-07-04 |
+| 13 | `13-file-handling-complete.md` | 文件识别与处理完整方案 | 草稿 | 2026-07-04 |
 
 ## 状态说明
 
