@@ -97,7 +97,9 @@ function saveAPIKey(key) {
 
 function classifyIntent(input) {
   const lower = input.toLowerCase()
-  if (/^(解释|explain|what|how|为什么|why|描述|describe)/.test(lower)) return 'ask'
+  // 检测执行意图
+  if (/^(执行|运行|run|exec|部署|deploy|安装|install|启动|start|构建|build|测试|test)/.test(lower)) return 'code'
+  if (/^(解释|explain|what|how|为什么|why|描述|describe|是什么)/.test(lower)) return 'ask'
   if (/^(修复|fix|debug|bug|报错|错误|not work|broken|test failed)/.test(lower)) return 'debug'
   if (/^(设计|design|架构|architecture|方案|plan for|规划)/.test(lower)) return 'plan'
   if (/^(批量|batch|所有|all files|refactor all)/.test(lower)) return 'plan'
@@ -532,10 +534,16 @@ async function processMessage(userInput) {
     state.messages[thinkingIdx] = { ...state.messages[thinkingIdx], content: thinking.join('\n') }
 
     const modePrompts = {
-      plan: t('你是一个架构设计专家。', 'Architecture design expert.'),
-      code: t('你是一个编程助手。', 'Coding assistant.'),
-      debug: t('你是一个调试助手。', 'Debugging assistant.'),
-      ask: t('你是一个简洁的问答助手。', 'Q&A assistant.'),
+      plan: `你是一个架构设计专家。分析需求并生成技术方案。
+重要：你可以建议用户运行命令，但不要直接执行终端命令。输出架构决策记录（ADR）。`,
+      code: `你是一个编程助手，具备完整的终端命令执行能力。
+你可以：读取文件、修改代码、执行 shell 命令、安装依赖、运行测试。
+当用户要求执行命令时，直接给出可以复制粘贴执行的具体命令。
+修改代码时使用 diff 格式展示变更（+ 新增 / - 删除）。`,
+      debug: `你是一个调试助手，具备完整的终端命令执行能力。
+你可以：运行测试、查看日志、分析错误堆栈、修复代码、重新执行验证。
+当用户报告错误时，给出具体的排查步骤和修复命令。`,
+      ask: `你是一个简洁的问答助手。直接回答问题，不要做出代码变更。`,
     }
     const langNote = state.lang === 'zh' ? '用中文回复。' : 'Reply in English.'
 
