@@ -199,16 +199,10 @@ function renderStartup() {
     state.projectSummary = buildProjectSummary(state.cwd)
   } catch { state.projectSummary = '(unable to scan project)' }
 
-  // Show P0 capability gaps on startup
+  // Check P0 capability gaps
   const p0Missing = CapabilityManager.audit().filter(c => c.required === 'P0' && c.status !== 'available')
-  if (p0Missing.length > 0) {
-    console.log(c.dim(`\n  ⚠ ${p0Missing.length} 个 P0 能力缺失。输入 /caps 查看 | /fix <ID> 开发`))
-  }
 
   // Welcome screen
-  renderStartup()
-
-  // Jai pixel dinosaur + wordmark side by side
   const mascotLines = jai.render(false)
   const cyan = chalk.hex('#00B8D9')
   const orange = chalk.hex('#FF8C00')
@@ -264,6 +258,11 @@ function renderStartup() {
 
   stdout.write(c.dim('\n   ' + '─'.repeat(50) + '\n'))
   stdout.write(c.dim(`   ${t('输入任务描述直接开始 · Ctrl+C 退出 · /help 命令列表', 'Type a task to begin · Ctrl+C exit · /help commands')}\n\n`))
+
+  // Show P0 capability gaps
+  if (p0Missing.length > 0) {
+    stdout.write(c.yellow(`  ⚠ ${p0Missing.length} P0 能力缺失: /caps 查看 | /fix <ID> 开发`))
+  }
 }
 
 function renderMessages() {
