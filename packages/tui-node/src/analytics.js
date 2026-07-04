@@ -8,39 +8,16 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
-interface DailyStats {
-  date: string
-  totalTokens: { input: number; output: number; total: number }
-  totalRequests: number
-  totalSessions: number
-  totalErrors: number
-  totalTime: number // ms
-  byModel: Record<string, { input; output; requests; avgLatency }>
-}
-
-interface AnalyticsData {
-  total: DailyStats
-  daily: Record<string, DailyStats>
-  currentSession: {
-    startTime: number
-    tokens: { input; output; total }
-    requests: number
-    model: string
-  }
-}
-
-class Analytics {
-  private data: AnalyticsData
-  private filePath: string
-  private _dirty = false
-
+export class Analytics {
   constructor() {
     this.filePath = path.join(os.homedir(), '.jaicode', 'analytics.json')
     this.data = this._load()
+    this._dirty = false
+    this._timer = null
     this._ensureSession()
   }
 
-  private _load(): AnalyticsData {
+  _load() {
     try { return JSON.parse(fs.readFileSync(this.filePath, 'utf-8')) }
     catch {
       return {
@@ -51,25 +28,25 @@ class Analytics {
     }
   }
 
-  private _emptyDay(date: string): DailyStats {
+  _emptyDay(date) {
     return {
       date, totalTokens: { input: 0, output: 0, total: 0 },
       totalRequests: 0, totalSessions: 0, totalErrors: 0, totalTime: 0, byModel: {}
     }
   }
 
-  private _ensureSession() { this._current().totalSessions++; this._getDay().totalSessions++; this._dirty = true; this._save() }
+  _ensureSession() { this._current().totalSessions++; this._getDay().totalSessions++; this._dirty = true; this._save() }
 
-  private _current() { return this.data.currentSession }
+  _current() { return this.data.currentSession }
 
-  private _getDay(): DailyStats {
+  _getDay() {
     const today = new Date().toISOString().slice(0, 10)
     if (!this.data.daily[today]) this.data.daily[today] = this._emptyDay(today)
     return this.data.daily[today]
   }
 
   /** Record an API request with its token usage */
-  recordRequest(model: string, inputTokens: number, outputTokens: number, latencyMs: number, isError = false) {
+  recordRequest(model, inputTokens, outputTokens, latencyMs, isError = false) {
     const total = inputTokens + outputTokens
     const cur = this._current()
     const day = this._getDay()
@@ -96,30 +73,30 @@ class Analytics {
   }
 
   /** Get token rate (tokens/sec) for current session */
-  getSessionRateLimit(): string {
+  getSessionRateLimit() {
     const cur = this._current()
     const elapsed = (Date.now() - cur.startTime) / 1000
     if (elapsed < 1) return '0 t/s'
     const rate = cur.tokens.output / elapsed
-    return `${rate.toFixed(1)} t/s`
+    return rate.toFixed(1) + ' t/s'
   }
 
   /** Format stats for status bar display */
-  getStatusBarStats(): { current: string; total: string } {
+  getStatusBarStats() {
     const cur = this._current()
     const t = this.data.total
 
-    // Current session: tokens + requests + rate
+    // Current session
     const curTokens = cur.tokens.total > 0 ? cur.tokens.total : 0
     const curReq = cur.requests
     const rate = this.getSessionRateLimit()
-    const current = `${curReq}req ${curTokens}tok ${rate}`
+    const current = curReq + 'req ' + curTokens + 'tok ' + rate
 
-    // All-time: total tokens + sessions
+    // All-time
     const totalTok = t.totalTokens.total
     const totalReq = t.totalRequests
     const sessions = t.totalSessions
-    const total = `${totalReq}req ${totalTok}tok ${sessions}ses`
+    const total = totalReq + 'req ' + totalTok + 'tok ' + sessions + 'ses'
 
     return { current, total }
   }
@@ -132,43 +109,40 @@ class Analytics {
   }
 
   /** Get detailed report for /stats command */
-  getDetailedReport(): string[] {
+  getDetailedReport() {
     const t = this.data.total
-    const day = this._getDay()
     const cur = this._current()
     const avgLatency = t.totalRequests > 0 ? Math.round(t.totalTime / t.totalRequests) : 0
     const curElapsed = Math.round((Date.now() - cur.startTime) / 1000)
-
-    return [
+    const lines = [
       '--- Jaicode Analytics ---',
       '',
-      `Session:  ${cur.requests} requests, ${cur.tokens.total} tokens, ${curElapsed}s`,
-      `  Rate:   ${this.getSessionRateLimit()}`,
-
-      '', 'Total:',
-      `  APIs:  ${t.totalRequests} requests`,
-      `  In:     ${t.totalTokens.input} prompt tokens`,
-      `  Out:    ${t.totalTokens.output} completion tokens`,
-      `  Total:  ${t.totalTokens.total} tokens`,
-      `  Avg:    ${avgLatency}ms per request`,
-      `  Errors: ${t.totalErrors}`,
-
-      '', `Models:` ,
-      ...Object.entries(t.byModel).map(([name, s]) => `  ${name}: ${s.requests}req ${s.in}/${s.out}tok ${s.avgLatency}ms`),
+      '  Session:  ' + cur.requests + ' req, ' + cur.tokens.total + ' tok, ' + curElapsed + 's',
+      '  Rate:     ' + this.getSessionRateLimit(),
+      '',
+      '  Total:',
+      '    Req:    ' + t.totalRequests,
+      '    In:     ' + t.totalTokens.input + ' prompt tok',
+      '    Out:    ' + t.totalTokens.output + ' completion tok',
+      '    Sum:    ' + t.totalTokens.total + ' tok',
+      '    Avg:    ' + avgLatency + 'ms latency',
+      '    Errors: ' + t.totalErrors,
+      '    Models:',
     ]
+    for (const [name, s] of Object.entries(t.byModel)) {
+      lines.push('      ' + name + ': ' + s.requests + 'req ' + s.input + '/' + s.output + 'tok ' + s.avgLatency + 'ms')
+    }
+    return lines
   }
 
-  private _saveDebounced() {
+  _saveDebounced() {
     if (this._timer) return
     this._timer = setTimeout(() => { this._save(); this._timer = null }, 5000)
   }
-  private _timer: any = null
 
-  private _save() {
+  _save() {
     if (!this._dirty) return
     try { fs.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2)) } catch {}
     this._dirty = false
   }
 }
-
-export { Analytics, AnalyticsData }
