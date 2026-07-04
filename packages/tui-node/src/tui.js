@@ -212,7 +212,7 @@ function renderStartup() {
 
   // ─── Logo: T-Rex + Jai wordmark ──────────────────────
   const MASCOT_W = 26
-  const LOGO_W = 22
+  const LOGO_W = 20
   const GAP = 6
   const LOGO_INDENT = 4 // Logo starts 4 lines below mascot top
 
@@ -220,17 +220,17 @@ function renderStartup() {
   const rawMascot = mascotLines.map(l => l.padEnd(MASCOT_W))
   const coloredMascot = colorize(rawMascot)
 
-  // Logo content - all lines exactly LOGO_W chars wide
+  // Logo content - pixel art "Jai" in a box
   const logoContent = [
-    '╔════════════════╗',
-    '║ ██ █████ ██╗  ║',
-    '║ ██ ██╗ ██║██╗ ║',
-    '║ █████╔╝████║║  ║',
-    '║██╗ ██╗ ███║██║ ║',
-    '║ ██████╗ █████║ ║',
-    '╚════════════════╝',
-    `v${VERSION}          `,
-    'Local-first AI Agen',
+    '╔══════════════════╗',
+    '║ ██  █████  ██    ║',
+    '║  ██ █  █   █     ║',
+    '║  ██  ██    █     ║',
+    '║  ██ █  █   █     ║',
+    '║ ██  █████  ██    ║',
+    '╚══════════════════╝',
+    `v${VERSION}            `,
+    'Local-first AI Agent ',
   ]
 
   // Build full logo block (14 lines, matching mascot height)
