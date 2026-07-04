@@ -17,7 +17,7 @@ import { JaiMascot } from './mascot.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.2.0'
+const VERSION = '0.3.0'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
@@ -166,25 +166,39 @@ function renderStartup() {
   clearScreen()
   stdout.write('\n')
 
-  // Jai mascot + Logo side by side
+  // Jai pixel dinosaur + wordmark side by side
   const mascotLines = jai.render(false)
-  const logoLines = [
-    c.primary.bold('   ⬡ Jaicode'),
-    c.dim(`   v${VERSION} — Local-first AI Coding Agent`),
-    '',
-    c.dim('   Project: ') + c.accent(detectProject().name),
+  const cyan = chalk.hex('#00B8D9')
+  const orange = chalk.hex('#FF8C00')
+
+  // Build the wordmark block
+  const logoBlock = [
+    orange.bold('  ╔══════════════════╗'),
+    orange.bold('  ║  ██  █████ ██    ║'),
+    orange.bold('  ║  ██  ██    ██ ██ ║'),
+    orange.bold('  ║  ██  █████ ██   ║'),
+    orange.bold('  ║██ ██  ██    ██  ║'),
+    orange.bold('  ║ ████  █████ ██  ║'),
+    orange.bold('  ╚══════════════════╝'),
+    cyan(`  v${VERSION}`),
+    c.dim('  Local-first AI Agent'),
   ]
 
-  // Merge mascot and logo line by line
-  const maxLines = Math.max(mascotLines.length, logoLines.length)
+  // Render mascot + logo side by side
+  const maxLines = Math.max(mascotLines.length, logoBlock.length)
   for (let i = 0; i < maxLines; i++) {
-    const mLine = (mascotLines[i] || '').padEnd(26)
-    const lLine = logoLines[i] || ''
-    stdout.write(`  ${mLine}  ${lLine}\n`)
+    const mLine = (mascotLines[i] || '').padEnd(30)
+    const lLine = logoBlock[i] || ''
+    // Colorize the dinosaur: replace ▓ with orange, ◉/★/✦ with bright
+    const coloredMascot = mLine
+      .replace(/▓/g, orange('▓'))
+      .replace(/[◉★✦]/g, cyan('◉'))
+      .replace(/[◎◯○]/g, chalk.yellow('○'))
+    stdout.write(`  ${coloredMascot}  ${lLine}\n`)
   }
 
   stdout.write('\n')
-  stdout.write(c.dim('   ' + '─'.repeat(50) + '\n'))
+  stdout.write(c.dim('  ' + '─'.repeat(50) + '\n'))
 
   // Provider status
   const cfg = loadConfig()
@@ -248,15 +262,20 @@ function renderMessages() {
 }
 
 function renderStatusBar() {
-  const col = Math.min(process.stdout.columns || 60, 60)
   const mode = state.mode === 'auto' ? t('自动', 'Auto') : state.mode.toUpperCase()
   const provider = state.provider || t('未设置', 'None')
   const statusColor = state.isProcessing ? c.yellow : c.green
   const statusIcon = state.isProcessing ? '◐' : '●'
 
-  const left = `  ${statusIcon} ${mode} | ${provider}`
+  // Get animated small mascot
+  const smallMascot = jai.render(true)
+  const mascotLine = smallMascot[0] || ''
+  const orange = chalk.hex('#8B5E3C')
+  const coloredMascot = mascotLine.replace(/▓/g, orange('▓')).replace(/[◉★✦]/g, chalk.cyan('◉'))
+
+  const left = `  ${coloredMascot}  ${statusIcon} ${mode} | ${provider}`
   const right = `Ctrl+C ${t('退出', 'exit')} | ${state.lang === 'zh' ? '中' : 'EN'}`
-  const padding = ' '.repeat(Math.max(0, col - left.length - right.length - 4))
+  const padding = ' '.repeat(Math.max(0, 60 - left.length - right.length - 4))
 
   stdout.write('\n' + statusColor(left) + padding + c.dim(right) + '\n')
 }
