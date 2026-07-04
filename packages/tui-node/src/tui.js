@@ -18,7 +18,7 @@ import { Analytics } from './analytics.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.6.0'
+const VERSION = '0.7.0'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
@@ -28,6 +28,7 @@ const analytics = new Analytics()
 
 // ─── Skills ─────────────────────────────────────────────
 import { scanProject, buildProjectSummary, buildFileContext, readFile } from './skills/file-reader.js'
+import { CapabilityManager } from './skills/capability-check.js'
 import { Authorization, AuditLogger } from './auth/authorization.js'
 
 // ─── Auth ───────────────────────────────────────────────
@@ -197,6 +198,15 @@ function renderStartup() {
   try {
     state.projectSummary = buildProjectSummary(state.cwd)
   } catch { state.projectSummary = '(unable to scan project)' }
+
+  // Show P0 capability gaps on startup
+  const p0Missing = CapabilityManager.audit().filter(c => c.required === 'P0' && c.status !== 'available')
+  if (p0Missing.length > 0) {
+    console.log(c.dim(`\n  ⚠ ${p0Missing.length} 个 P0 能力缺失。输入 /caps 查看 | /fix <ID> 开发`))
+  }
+
+  // Welcome screen
+  renderStartup()
 
   // Jai pixel dinosaur + wordmark side by side
   const mascotLines = jai.render(false)
@@ -816,8 +826,8 @@ async function main() {
         state.messages.push({
           role: 'system',
           content: t(
-            '命令: /quit 退出 · /clear 清屏 · /mode 切换模式 · /stats 用量 · /config 配置 · /read <文件> · /exec <命令> · /audit 审计日志',
-            'Commands: /quit · /clear · /mode · /stats · /config · /read <f> · /exec <cmd> · /audit'
+            '命令: /quit · /clear · /mode · /stats · /config · /read <文件> · /exec <命令> · /audit · /caps · /fix <能力>',
+            'Commands: /quit · /clear · /mode · /stats · /config · /read <f> · /exec <cmd> · /audit · /caps · /fix <cap>'
           ),
           timestamp: Date.now(),
         })
@@ -906,8 +916,42 @@ async function main() {
           state.messages.push({ role: 'system', content: t('暂无审计日志', 'No audit logs'), timestamp: Date.now() })
         } else {
           const lines = logs.map(l => `[${l.ts}] ${l.action}(${l.level}) → ${l.result}`)
-          state.messages.push({ role: 'system', content: '--- ' + t('审计日志', 'Audit Log') + ' ---\n' + lines.join('\n'), timestamp: Date.now() })
+          state.messages.push({ role: 'system', content: '--- ' + t('审计日志', 'Security Audit') + ' ---\n' + lines.join('\n'), timestamp: Date.now() })
         }
+        continue
+      }
+      if (cmd === 'capabilities' || cmd === 'caps') {
+        const caps = CapabilityManager.audit()
+        const report = CapabilityManager.printAudit(caps)
+        state.messages.push({ role: 'system', content: report.join('\n'), timestamp: Date.now() })
+        continue
+      }
+      if (cmd === 'fix') {
+        const target = input.slice(4).trim()
+        if (!target) {
+          state.messages.push({ role: 'system', content: t('用法: /fix <能力ID>，如 /fix cap-file-write', 'Usage: /fix <cap-id>, e.g. /fix cap-file-write'), timestamp: Date.now() })
+          continue
+        }
+        const caps = CapabilityManager.audit()
+        const cap = caps.find(c => c.id === target)
+        if (!cap) {
+          state.messages.push({ role: 'system', content: `未找到能力: ${target}`, timestamp: Date.now() })
+          continue
+        }
+        if (cap.status === 'available') {
+          state.messages.push({ role: 'system', content: `✓ ${cap.name} 已可用，无需修复`, timestamp: Date.now() })
+          continue
+        }
+        if (!cap.solution) {
+          state.messages.push({ role: 'system', content: `✗ ${cap.name} 暂无自动解决方案`, timestamp: Date.now() })
+          continue
+        }
+        // 用户确认
+        state.messages.push({
+          role: 'system',
+          content: `开发能力: ${cap.name}\n方案: ${cap.solution.description}\n\n确认? [y/N]`,
+          timestamp: Date.now(),
+        })
         continue
       }
 
