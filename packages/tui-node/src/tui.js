@@ -12,13 +12,13 @@ import path from 'node:path'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import chalk from 'chalk'
-import { JaiMascot } from './mascot.js'
+import { JaiMascot, FRAMES, colorize, padFrame, FRAME_WIDTH } from './mascot.js'
 import { Analytics } from './analytics.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.7.0'
+const VERSION = '0.7.1'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
@@ -208,36 +208,27 @@ function renderStartup() {
   const orange = chalk.hex('#FF8C00')
 
   // Build the wordmark block
+  // Logo block (fixed position, no color codes affecting width)
   const logoBlock = [
-    orange.bold('  ╔══════════════════╗'),
-    orange.bold('  ║  ██  █████ ██    ║'),
-    orange.bold('  ║  ██  ██    ██ ██ ║'),
-    orange.bold('  ║  ██  █████ ██   ║'),
-    orange.bold('  ║██ ██  ██    ██  ║'),
-    orange.bold('  ║ ████  █████ ██  ║'),
-    orange.bold('  ╚══════════════════╝'),
-    cyan(`  v${VERSION}`),
-    c.dim('  Local-first AI Agent'),
+    '                        ',
+    '  ╔══════════════════╗  ',
+    '  ║  ██  █████ ██    ║  ',
+    '  ║  ██  ██    ██ ██ ║  ',
+    '  ║  ██  █████ ██   ║  ',
+    '  ║██ ██  ██    ██  ║  ',
+    '  ║ ████  █████ ██  ║  ',
+    '  ╚══════════════════╝  ',
+    '  v' + VERSION + '              ',
+    '  Local-first AI Agent  ',
   ]
 
-  // Strip ANSI codes to measure visible length
-  const stripAnsi = (s) => s.replace(/\x1B\[[0-9;]*[mK]/g, '')
-
-  // Render mascot + logo side by side
-  const maxLines = Math.max(mascotLines.length, logoBlock.length)
-  const padLen = 32 // Fixed visible width for mascot column
+  // Render mascot (colorized) + logo side by side
+  const coloredMascot = colorize(mascotLines)
+  const maxLines = Math.max(coloredMascot.length, logoBlock.length)
   for (let i = 0; i < maxLines; i++) {
-    const mLine = (mascotLines[i] || '')
+    const mLine = padFrame([coloredMascot[i] || ''])[0]
     const lLine = logoBlock[i] || ''
-    // Colorize the dinosaur AFTER measuring width
-    const coloredMascot = mLine
-      .replace(/▓/g, orange('▓'))
-      .replace(/[◉★✦]/g, cyan('◉'))
-      .replace(/[◎◯○]/g, chalk.yellow('○'))
-    // Pad based on visible (uncolored) length
-    const visLen = stripAnsi(mLine).length
-    const pad = ' '.repeat(Math.max(0, padLen - visLen))
-    stdout.write(`  ${coloredMascot}${pad} ${lLine}\n`)
+    stdout.write(`${mLine}  ${lLine}\n`)
   }
 
   stdout.write('\n')
@@ -317,9 +308,8 @@ function renderStatusBar() {
 
   // Get animated small mascot
   const smallMascot = jai.render(true)
-  const mascotLine = smallMascot[0] || ''
-  const orange = chalk.hex('#8B5E3C')
-  const coloredMascot = mascotLine.replace(/▓/g, orange('▓')).replace(/[◉★✦]/g, chalk.cyan('◉'))
+  const mascotLine = (smallMascot[0] || '').padEnd(18)
+  const coloredMascot = colorize([mascotLine])[0]
 
   // Get analytics
   const stats = analytics.getStatusBarStats()
