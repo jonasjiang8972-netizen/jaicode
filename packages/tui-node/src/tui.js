@@ -222,12 +222,14 @@ function renderStartup() {
     '  Local-first AI Agent  ',
   ]
 
-  // Render mascot (colorized) + logo side by side
-  const coloredMascot = colorize(mascotLines)
+  // Render mascot + logo side by side
+  // Key: pad RAW lines first, THEN colorize
+  const rawLines = mascotLines.map(l => l.padEnd(FRAME_WIDTH))
+  const coloredMascot = colorize(rawLines)
   const maxLines = Math.max(coloredMascot.length, logoBlock.length)
   for (let i = 0; i < maxLines; i++) {
-    const mLine = padFrame([coloredMascot[i] || ''])[0]
-    const lLine = logoBlock[i] || ''
+    const mLine = coloredMascot[i] || ' '.repeat(FRAME_WIDTH)
+    const lLine = (logoBlock[i] || '').padEnd(24)
     stdout.write(`${mLine}  ${lLine}\n`)
   }
 
