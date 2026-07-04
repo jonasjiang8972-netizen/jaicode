@@ -61,7 +61,7 @@ export function saveProjectMemory(cwd, memory) {
 
 // ─── Auto-Scan Project ────────────────────────────────
 export function autoScanProject(cwd) {
-  const memory = { project: {}, preferences: {}, history: [] }
+  const memory = { project: { techStack: [], directories: [], entryPoints: [] }, preferences: {}, history: [] }
 
   // Detect tech stack
   try {
@@ -72,8 +72,10 @@ export function autoScanProject(cwd) {
       const deps = { ...pkg.dependencies, ...pkg.devDependencies }
       memory.project.techStack = detectTechStack(deps)
       memory.project.entryPoints = findEntryPoints(deps)
+    } else {
+      memory.project.name = path.basename(cwd)
     }
-  } catch { /* ignore */ }
+  } catch { memory.project.name = path.basename(cwd) }
 
   // Detect directories
   try {

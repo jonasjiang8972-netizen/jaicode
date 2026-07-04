@@ -638,8 +638,8 @@ async function processMessage(userInput) {
     saveProjectMemory(state.cwd, projectMem)
 
     const projectContext = state.lang === 'zh'
-      ? `\n\n当前项目信息:\n- 名称: ${projectMem.project.name || '未知'}\n- 技术栈: ${(projectMem.project.techStack || []).join(', ')}\n- 目录: ${(projectMem.project.directories || []).slice(0, 8).join(', ')}`
-      : `\n\nProject context:\n- Name: ${projectMem.project.name || 'unknown'}\n- Stack: ${(projectMem.project.techStack || []).join(', ')}\n- Dirs: ${(projectMem.project.directories || []).slice(0, 8).join(', ')}`
+      ? `\n\n当前项目信息:\n- 名称: ${projectMem.project.name || '未知'}\n- 技术栈: ${Array.isArray(projectMem.project.techStack) ? projectMem.project.techStack.join(', ') : '未知'}\n- 目录: ${Array.isArray(projectMem.project.directories) ? projectMem.project.directories.slice(0, 8).join(', '): '无'}`
+      : `\n\nProject context:\n- Name: ${projectMem.project.name || 'unknown'}\n- Stack: ${Array.isArray(projectMem.project.techStack) ? projectMem.project.techStack.join(', ') : 'unknown'}\n- Dirs: ${Array.isArray(projectMem.project.directories) ? projectMem.project.directories.slice(0, 8).join(',') : 'none'}`
 
     // Knowledge freshness check
     const freshnessNote = getFreshnessPromptModifier(userInput)
