@@ -12,11 +12,15 @@ import path from 'node:path'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import chalk from 'chalk'
+import { JaiMascot } from './mascot.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.1.1'
+const VERSION = '0.2.0'
+
+// ─── Mascot ────────────────────────────────────────────
+const jai = new JaiMascot()
 
 // ─── Theme ─────────────────────────────────────────────
 const c = {
@@ -162,29 +166,37 @@ function renderStartup() {
   clearScreen()
   stdout.write('\n')
 
-  // Compact logo
-  stdout.write(c.primary.bold('   ⬡ Jaicode') + c.dim(' v0.1.0 — Local-first AI Coding Agent\n'))
-  stdout.write(c.dim('   ' + '─'.repeat(50) + '\n\n'))
+  // Jai mascot + Logo side by side
+  const mascotLines = jai.render(false)
+  const logoLines = [
+    c.primary.bold('   ⬡ Jaicode'),
+    c.dim(`   v${VERSION} — Local-first AI Coding Agent`),
+    '',
+    c.dim('   Project: ') + c.accent(detectProject().name),
+  ]
 
-  // Project context
-  const proj = detectProject()
-  stdout.write(c.dim('   Project: ') + c.accent(proj.name) + c.dim(` (${proj.type})\n`))
-  stdout.write(c.dim('   Path:    ') + c.dim(state.cwd) + '\n')
+  // Merge mascot and logo line by line
+  const maxLines = Math.max(mascotLines.length, logoLines.length)
+  for (let i = 0; i < maxLines; i++) {
+    const mLine = (mascotLines[i] || '').padEnd(26)
+    const lLine = logoLines[i] || ''
+    stdout.write(`  ${mLine}  ${lLine}\n`)
+  }
+
+  stdout.write('\n')
+  stdout.write(c.dim('   ' + '─'.repeat(50) + '\n'))
 
   // Provider status
   const cfg = loadConfig()
-  const { name: providerName, cfg: providerCfg, endpoint } = getProviderConfig(cfg)
+  const { name: providerName, cfg: providerCfg } = getProviderConfig(cfg)
   if (providerCfg?.apiKey) {
     state.provider = providerName
-    state.model = providerCfg.model || providerCfg.defaultModel || 'claude-sonnet-4-20250514'
-    const baseInfo = providerCfg.baseURL ? c.dim(` → ${providerCfg.baseURL.slice(0, 40)}...`) : ''
-    stdout.write(c.dim('   Provider: ') + c.green(`✓ ${providerName}`) +
-                c.dim(` (${state.model})`) + baseInfo + '\n')
+    state.model = providerCfg.model || 'claude-sonnet-4-20250514'
+    const base = providerCfg.baseURL ? c.dim(` → ${providerCfg.baseURL.slice(0, 35)}...`) : ''
+    stdout.write(c.dim('   Provider: ') + c.green(`✓ ${providerName}`) + c.dim(` (${state.model})`) + base + '\n')
   } else {
     stdout.write(c.dim('   Provider: ') + c.red('✗ Not configured') + '\n')
-    stdout.write(c.yellow('\n   ⚠ No API Key found. You can add it via:\n'))
-    stdout.write(c.dim('     运行 `jaicode` 启动引导配置\n'))
-    stdout.write(c.dim('     或设置 ANTHROPIC_API_KEY / OPENAI_API_KEY 环境变量\n'))
+    stdout.write(c.yellow('\n   ⚠ No API Key found.\n'))
   }
 
   stdout.write(c.dim('\n   ' + '─'.repeat(50) + '\n'))
@@ -460,7 +472,8 @@ async function processMessage(userInput) {
   const intent = state.mode === 'auto' ? classifyIntent(userInput) : state.mode
   thinking.push(`[${t('意图识别', 'Intent')}] ${intent.toUpperCase()}`)
 
-  // Show thinking
+  // Show thinking + animate mascot
+  jai.setState('thinking')
   state.isProcessing = true
   state.messages.push({
     role: 'thinking',
@@ -529,7 +542,8 @@ async function processMessage(userInput) {
     if (result.stream || result.body) {
       const streamResult = result.stream ? result : { stream: result.body, apiFormat: result.apiFormat }
 
-      // Print response header
+      // Print response header + mascot starts talking
+      jai.setState('talking')
       process.stdout.write(`${c.accent('⬡')} ${c.bold('Jaicode')} ${c.dim(new Date().toLocaleTimeString())}\n  `)
 
       // Start async thinking redraw during streaming
@@ -546,6 +560,7 @@ async function processMessage(userInput) {
 
       const response = await streamResponse(streamResult)
       clearInterval(redrawTimer)
+      jai.setState('idle')
 
       if (!response || response.trim().length === 0) {
         thinking.push(`[${t('响应为空', 'Empty')}] ${t('对方返回空内容', 'Empty response received')}`)
