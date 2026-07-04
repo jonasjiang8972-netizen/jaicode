@@ -210,43 +210,42 @@ function renderStartup() {
   const cyan = chalk.hex('#00B8D9')
   const orange = chalk.hex('#FF8C00')
 
-  // ─── Logo: T-Rex dinosaur + Jai wordmark ─────────────
-  const MASCOT_W = 28 // Mascot column width
-  const LOGO_W = 26   // Logo column width
-  const GAP = 4       // Space between mascot and logo
+  // ─── Logo: T-Rex + Jai wordmark ──────────────────────
+  const MASCOT_W = 26
+  const LOGO_W = 24
+  const GAP = 6
 
-  // Raw mascot lines (fixed width)
+  // Pad raw mascot lines to fixed width, then colorize
   const rawMascot = mascotLines.map(l => l.padEnd(MASCOT_W))
   const coloredMascot = colorize(rawMascot)
 
-  // Logo block (vertically centered)
+  // Logo content (vertically centered relative to 14-line mascot)
   const logoContent = [
-    '  ╔════════════════════╗',
-    '  ║  ██  █████ ██      ║',
-    '  ║  ██  ██    ██ ██  ║',
-    '  ║  ██  █████ ██    ║',
-    '  ║██ ██  ██    ██    ║',
-    '  ║ ████  █████ ██    ║',
-    '  ╚════════════════════╝',
-    `  v${VERSION}                `,
-    '  Local-first AI Agent   ',
+    '╔════════════════════╗',
+    '║ ██ █████ ██╗       ║',
+    '║ ██ ██╗ ██║██╗     ║',
+    '║ █████╔╝████║║      ║',
+    '║██╗ ██╗ ███║██║    ║',
+    '║ ██████╗ █████║     ║',
+    '╚══════════════╝     ',
+    `v${VERSION}              `,
+    'Local-first AI Agent ',
   ]
 
-  const totalMascotLines = rawMascot.length
-  const totalLogoLines = logoContent.length
-  const padTop = Math.max(0, Math.floor((totalMascotLines - totalLogoLines) / 2))
-
-  const logoBlock = [
-    ...Array(padTop).fill(' '.repeat(LOGO_W)),
+  // Center logo vertically (14 mascot lines vs 9 logo lines)
+  const logoStartLine = Math.floor((14 - logoContent.length) / 2) // = 2
+  const emptyLine = ' '.repeat(LOGO_W)
+  const logoLines = [
+    ...Array(logoStartLine).fill(emptyLine),
     ...logoContent.map(l => l.padEnd(LOGO_W)),
-    ...Array(Math.max(0, totalMascotLines - totalLogoLines - padTop)).fill(' '.repeat(LOGO_W)),
+    ...Array(14 - logoContent.length - logoStartLine).fill(emptyLine),
   ]
 
-  // Render side by side
-  for (let i = 0; i < rawMascot.length; i++) {
-    const mLine = coloredMascot[i] || ' '.repeat(MASCOT_W)
-    const lLine = logoBlock[i] || ' '.repeat(LOGO_W)
-    stdout.write(`  ${mLine}${' '.repeat(GAP)}${lLine}\n`)
+  // Render: indent + colored mascot + fixed gap + logo
+  for (let i = 0; i < 14; i++) {
+    const m = coloredMascot[i] || ' '.repeat(MASCOT_W)
+    const l = logoLines[i] || emptyLine
+    stdout.write(`  ${m}${' '.repeat(GAP)}${l}\n`)
   }
   stdout.write(c.dim('  ' + '─'.repeat(50) + '\n'))
 

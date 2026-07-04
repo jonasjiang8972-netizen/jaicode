@@ -51,10 +51,15 @@ export function scanProject(cwd, maxDepth = 3) {
 }
 
 export function readFile(cwd, filePath) {
-  const fullPath = path.resolve(cwd, filePath)
+  // Handle image files gracefully (don't crash on binary files)
+  const ext = path.extname(filePath).toLowerCase()
+  const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.ico', '.svg']
+  if (IMAGE_EXTS.includes(ext)) {
+    return { error: `Image file detected: ${filePath}\nUse /read for text files only. Images require VL model support.`, isImage: true, path: filePath }
+  }
 
   // Security: prevent path traversal
-  if (!fullPath.startsWith(cwd)) {
+  if (!path.resolve(cwd, filePath).startsWith(cwd)) {
     return { error: 'Access denied: path outside project directory' }
   }
 
@@ -63,14 +68,14 @@ export function readFile(cwd, filePath) {
   }
 
   try {
-    const stat = fs.statSync(fullPath)
+    const stat = fs.statSync(path.resolve(cwd, filePath))
     if (stat.isDirectory()) {
       return { error: `Path is directory: ${filePath}` }
     }
     if (stat.size > MAX_FILE_SIZE) {
       return { error: `File too large (${stat.size} bytes, max ${MAX_FILE_SIZE})` }
     }
-    const content = fs.readFileSync(fullPath, 'utf-8')
+    const content = fs.readFileSync(path.resolve(cwd, filePath), 'utf-8')
     return { content, size: stat.size, path: filePath }
   } catch (e) {
     return { error: `Cannot read ${filePath}: ${e.message}` }
