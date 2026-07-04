@@ -184,17 +184,24 @@ function renderStartup() {
     c.dim('  Local-first AI Agent'),
   ]
 
+  // Strip ANSI codes to measure visible length
+  const stripAnsi = (s) => s.replace(/\x1B\[[0-9;]*[mK]/g, '')
+
   // Render mascot + logo side by side
   const maxLines = Math.max(mascotLines.length, logoBlock.length)
+  const padLen = 32 // Fixed visible width for mascot column
   for (let i = 0; i < maxLines; i++) {
-    const mLine = (mascotLines[i] || '').padEnd(30)
+    const mLine = (mascotLines[i] || '')
     const lLine = logoBlock[i] || ''
-    // Colorize the dinosaur: replace ▓ with orange, ◉/★/✦ with bright
+    // Colorize the dinosaur AFTER measuring width
     const coloredMascot = mLine
       .replace(/▓/g, orange('▓'))
       .replace(/[◉★✦]/g, cyan('◉'))
       .replace(/[◎◯○]/g, chalk.yellow('○'))
-    stdout.write(`  ${coloredMascot}  ${lLine}\n`)
+    // Pad based on visible (uncolored) length
+    const visLen = stripAnsi(mLine).length
+    const pad = ' '.repeat(Math.max(0, padLen - visLen))
+    stdout.write(`  ${coloredMascot}${pad} ${lLine}\n`)
   }
 
   stdout.write('\n')
