@@ -239,14 +239,67 @@ const FRAMES = {
     ],
   ],
 
-  // Wordmark: pixel-style "Jai"
-  wordmark: [
-    '   ██  █████ ██',
-    '   ██  ██    ██ ██',
-    '   ██  █████ ██',
-    '██ ██  ██    ██',
-    ' ████  █████ ██',
-  ],
+// Wordmark: pixel-style "Jai"
+wordmark: [
+  '   ██  █████ ██',
+  '   ██  ██    ██ ██',
+  '   ██  █████ ██',
+  '██ ██  ██    ██',
+  ' ████  █████ ██',
+],
 }
 
-export { FRAMES, colorize, padFrame, FRAME_WIDTH, FRAME_HEIGHT }
+// ─── Animation Controller ───────────────────────────────
+class JaiMascot {
+  constructor() {
+    this.state = 'idle'
+    this.frameIndex = 0
+    this.timer = null
+    this._resetTimer()
+  }
+
+  setState(newState) {
+    if (this.state === newState) return
+    this.state = newState
+    this.frameIndex = 0
+    this._resetTimer()
+  }
+
+  _resetTimer() {
+    if (this.timer) clearInterval(this.timer)
+    const fps = this.state === 'celebrate' ? 400 : this.state === 'thinking' ? 350 : 600
+    this.timer = setInterval(() => {
+      const frameKey = this._getKey()
+      const frames = FRAMES[frameKey] || FRAMES.idle
+      this.frameIndex = (this.frameIndex + 1) % frames.length
+    }, fps)
+  }
+
+  _getKey() {
+    if (this.state === 'idle' || this.state === 'celebrate') return this.state
+    if (this.state === 'thinking') return 'thinking'
+    if (this.state === 'talking') return 'talking'
+    return 'idle'
+  }
+
+  stop() {
+    if (this.timer) { clearInterval(this.timer); this.timer = null }
+  }
+
+  render(small = false) {
+    let frameKey
+    if (small) {
+      frameKey = this.state === 'thinking' ? 'smallThinking' :
+                 this.state === 'talking' ? 'smallTalking' : 'smallIdle'
+    } else {
+      frameKey = this.state
+    }
+    const frames = FRAMES[frameKey] || FRAMES[small ? 'smallIdle' : 'idle']
+    const frame = frames[this.frameIndex % frames.length]
+    return frame || []
+  }
+
+  destroy() { this.stop() }
+}
+
+export { FRAMES, colorize, padFrame, FRAME_WIDTH, FRAME_HEIGHT, JaiMascot }
