@@ -210,41 +210,44 @@ function renderStartup() {
   const cyan = chalk.hex('#00B8D9')
   const orange = chalk.hex('#FF8C00')
 
-  // Build the wordmark block
-  // Logo block - vertically centered with mascot
-  const mascotHeight = mascotLines.length
-  const logoRaw = [
-    '  ╔══════════════════╗  ',
-    '  ║  ██  █████ ██    ║  ',
-    '  ║  ██  ██    ██ ██ ║  ',
-    '  ║  ██  █████ ██   ║  ',
-    '  ║██ ██  ██    ██  ║  ',
-    '  ║ ████  █████ ██  ║  ',
-    '  ╚══════════════════╝  ',
-    '  v' + VERSION + '              ',
-    '  Local-first AI Agent  ',
+  // ─── Logo: T-Rex dinosaur + Jai wordmark ─────────────
+  const MASCOT_W = 28 // Mascot column width
+  const LOGO_W = 26   // Logo column width
+  const GAP = 4       // Space between mascot and logo
+
+  // Raw mascot lines (fixed width)
+  const rawMascot = mascotLines.map(l => l.padEnd(MASCOT_W))
+  const coloredMascot = colorize(rawMascot)
+
+  // Logo block (vertically centered)
+  const logoContent = [
+    '  ╔════════════════════╗',
+    '  ║  ██  █████ ██      ║',
+    '  ║  ██  ██    ██ ██  ║',
+    '  ║  ██  █████ ██    ║',
+    '  ║██ ██  ██    ██    ║',
+    '  ║ ████  █████ ██    ║',
+    '  ╚════════════════════╝',
+    `  v${VERSION}                `,
+    '  Local-first AI Agent   ',
   ]
-  // Center logo vertically relative to mascot
-  const padTop = Math.max(0, Math.floor((mascotHeight - logoRaw.length) / 2))
-  const padBottom = Math.max(0, mascotHeight - logoRaw.length - padTop)
+
+  const totalMascotLines = rawMascot.length
+  const totalLogoLines = logoContent.length
+  const padTop = Math.max(0, Math.floor((totalMascotLines - totalLogoLines) / 2))
+
   const logoBlock = [
-    ...Array(padTop).fill('                        '),
-    ...logoRaw,
-    ...Array(padBottom).fill('                        '),
+    ...Array(padTop).fill(' '.repeat(LOGO_W)),
+    ...logoContent.map(l => l.padEnd(LOGO_W)),
+    ...Array(Math.max(0, totalMascotLines - totalLogoLines - padTop)).fill(' '.repeat(LOGO_W)),
   ]
 
-  // Render mascot + logo side by side
-  // Key: pad RAW lines first, THEN colorize
-  const rawLines = mascotLines.map(l => l.padEnd(FRAME_WIDTH))
-  const coloredMascot = colorize(rawLines)
-  const maxLines = Math.max(coloredMascot.length, logoBlock.length)
-  for (let i = 0; i < maxLines; i++) {
-    const mLine = coloredMascot[i] || ' '.repeat(FRAME_WIDTH)
-    const lLine = (logoBlock[i] || '').padEnd(24)
-    stdout.write(`${mLine}  ${lLine}\n`)
+  // Render side by side
+  for (let i = 0; i < rawMascot.length; i++) {
+    const mLine = coloredMascot[i] || ' '.repeat(MASCOT_W)
+    const lLine = logoBlock[i] || ' '.repeat(LOGO_W)
+    stdout.write(`  ${mLine}${' '.repeat(GAP)}${lLine}\n`)
   }
-
-  stdout.write('\n')
   stdout.write(c.dim('  ' + '─'.repeat(50) + '\n'))
 
   // Provider status
