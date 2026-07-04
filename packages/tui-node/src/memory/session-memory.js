@@ -5,7 +5,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import os from 'node:node:os'
+import os from 'node:os'
 
 const SESSIONS_DIR = path.join(os.homedir(), '.jaicode', 'sessions')
 const MAX_RECENT_MESSAGES = 20
