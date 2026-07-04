@@ -18,7 +18,7 @@ import { Analytics } from './analytics.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.9.0'
+const VERSION = '0.9.4'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
