@@ -62,7 +62,7 @@ const routes = {
 
   // Prometheus metrics
   'GET /metrics': (req, res) => {
-    res.writeHead(200, { 'Content-Type: 'text/plain' })
+    res.writeHead(200, { 'Content-Type': 'text/plain' })
     res.end(metrics.toPrometheus())
   },
 

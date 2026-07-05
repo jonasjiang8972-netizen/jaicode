@@ -62,7 +62,7 @@ export class MCPClient {
       params: {
         protocolVersion: '2024-11-05',
         capabilities: {},
-        clientInfo: { name: 'jaicode', version: '0.11.0' },
+        clientInfo: { name: 'jaicode', version: '0.13.0' },
       },
     }
 

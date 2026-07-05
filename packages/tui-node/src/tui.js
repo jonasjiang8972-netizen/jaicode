@@ -18,7 +18,7 @@ import { Analytics } from './analytics.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.20.0'
+const VERSION = '0.13.0'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
@@ -402,7 +402,7 @@ async function callLLM(messages) {
 
   // Inject constitution as the first system message
   const constitution = loadConstitution({
-    VERSION: '0.20.0',
+    VERSION: '0.13.0',
     MODE: state.mode,
     LANGUAGE: state.lang === 'zh' ? 'Chinese' : 'English',
     PROJECT_CONTEXT: state.projectSummary || 'No project scan available',
