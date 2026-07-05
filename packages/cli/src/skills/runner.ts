@@ -74,8 +74,8 @@ export class SkillRunner {
         }
         process.stdout.write("\n")
         return true
-      } catch (e: any) {
-        console.error(`\n[skill:${name}] Execution failed: ${e.message}`)
+      } catch (e) {
+        console.error(`\n[skill:${name}] Execution failed: ${e instanceof Error ? e.message : String(e)}`)
         return false
       }
     } else {

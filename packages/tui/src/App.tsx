@@ -134,8 +134,8 @@ export function App() {
             }))
           }
         }
-      } catch (e: any) {
-        response = `❌ Error: ${e.message}`
+      } catch (e) {
+        console.error('[Jaicode] Stream error:', e instanceof Error ? e.message : String(e))
       }
       setState((s) => ({
         ...s,

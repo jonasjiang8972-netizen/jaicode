@@ -51,10 +51,6 @@ function sendError(res, status, code, message) {
 }
 
 // ─── SSE Helper ────────────────────────────────────────
-function sendSSE(res, event, data) {
-  res.write(`event: ${event}\n`)
-  res.write(`data: ${JSON.stringify(data)}\n\n`)
-}
 
 // ─── Routes ────────────────────────────────────────────
 const routes = {
@@ -85,8 +81,12 @@ const routes = {
           return sendError(res, 400, 'INVALID_INPUT', 'Message is required')
         }
 
-        // TODO: Integrate with actual LLM call
-        // For now, return a placeholder
+        // Real LLM integration
+        const cfg = getProviderConfig(provider)
+        if (!cfg.apiKey) {
+          return sendError(res, 401, 'NO_API_KEY', 'No API key configured. Set ANTHROPIC_API_KEY env var.')
+        }
+
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
@@ -94,7 +94,10 @@ const routes = {
         })
 
         sendSSE(res, 'start', { mode, timestamp: Date.now() })
-        sendSSE(res, 'chunk', { content: 'API mode is under development.' })
+
+        // Stream from real LLM
+        await streamLLM(cfg, message, mode, res)
+
         sendSSE(res, 'done', { timestamp: Date.now() })
         res.end()
       } catch (e) {
@@ -120,6 +123,150 @@ const routes = {
     sendJSON(res, 200, metrics.toJSON())
   },
 }
+
+// ─── Helpers ───────────────────────────────────────────
+function getProviderConfig(name) {
+  if (!name) {
+    name = process.env.JAICODE_PROVIDER || 'custom'
+  }
+  const apiKey = process.env[stringsToUpper(name + '_api_key')]
+    || process.env.ANTHROPIC_API_KEY
+
+  let baseURL, model, format
+  switch (name) {
+    case 'anthropic':
+      baseURL = 'https://api.anthropic.com'
+      model = 'claude-sonnet-4-20250514'
+      format = 'anthropic'
+      break
+    case 'openai':
+      baseURL = 'https://api.openai.com'
+      model = 'gpt-4o'
+      format = 'openai'
+      break
+    default:
+      baseURL = process.env.JAICODE_API_URL || 'https://api.longcat.chat/openai'
+      model = process.env.JAICODE_MODEL || 'LongCat-2.0'
+      format = 'openai'
+  }
+
+  return { name, apiKey, baseURL, model, format }
+}
+
+function stringsToUpper(s) {
+  let result = ''
+  for (const c of s) {
+    if (c >= 'a' && c <= 'z') {
+      result += String.fromCharCode(c.charCodeAt(0) - 32)
+    } else {
+      result += c
+    }
+  }
+  return result
+}
+
+function getSystemPrompt(mode) {
+  const prompts = {
+    plan: 'You are an architecture design expert. Output Architecture Decision Records (ADR).',
+    code: 'You are a coding assistant. Show file changes in diff format with + and - prefixes.',
+    debug: 'You are a debugging assistant. Analyze the error and provide a fix.',
+    ask: 'You are a concise Q&A assistant. Answer directly.',
+  }
+  return prompts[mode] || prompts.code
+}
+
+async function streamLLM(cfg, message, mode, res) {
+  const systemPrompt = getSystemPrompt(mode)
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: message },
+  ]
+
+  // Build request body
+  let body, url
+  if (cfg.format === 'anthropic') {
+    body = JSON.stringify({
+      model: cfg.model, max_tokens: 4096, stream: true,
+      system: systemPrompt, messages: messages.slice(1),
+    })
+    url = cfg.baseURL + '/v1/messages'
+  } else {
+    body = JSON.stringify({
+      model: cfg.model, max_tokens: 4096, stream: true, messages,
+    })
+    url = cfg.baseURL + '/v1/chat/completions'
+  }
+
+  // Build fetch options
+  const headers = { 'Content-Type': 'application/json' }
+  if (cfg.format === 'anthropic') {
+    headers['x-api-key'] = cfg.apiKey
+    headers['anthropic-version'] = '2023-06-01'
+  } else {
+    headers['Authorization'] = 'Bearer ' + cfg.apiKey
+  }
+
+  // Retry loop
+  let lastErr
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers,
+        body,
+      })
+
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}`)
+      }
+
+      const reader = resp.body
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      // Read stream
+      const reader2 = reader.getReader()
+      while (true) {
+        const { done, value } = await reader2.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6).trim()
+          if (data === '[DONE]') return
+
+          try {
+            const json = JSON.parse(data)
+            let content
+            if (json.delta?.text) {
+              content = json.delta.text
+            } else if (json.choices?.[0]?.delta?.content) {
+              content = json.choices[0].delta.content
+            } else if (json.content?.[0]?.text) {
+              content = json.content[0].text
+            }
+            if (content) {
+              sendSSE(res, 'chunk', { content })
+            }
+          } catch {
+            // skip malformed
+          }
+        }
+      }
+      return
+    } catch (e) {
+      lastErr = e
+      await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
+    }
+  }
+
+  sendSSE(res, 'chunk', { content: `⚠️ LLM error: ${lastErr.message}` })
+}
+
 
 // ─── Server ────────────────────────────────────────────
 export function startServer(port = PORT) {

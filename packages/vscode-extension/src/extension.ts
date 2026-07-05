@@ -138,14 +138,38 @@ export function activate(context: vscode.ExtensionContext) {
             })
 
             if (resp.ok) {
-                const data = await resp.json()
+                const reader = resp.body?.getReader()
+                if (!reader) {
+                    vscode.window.showErrorMessage('No response body')
+                    return
+                }
+
+                const decoder = new TextDecoder()
+                let output = ''
+
+                while (true) {
+                    const { done, value } = await reader.read()
+                    if (done) break
+                    const text = decoder.decode(value, { stream: true })
+                    const lines = text.split('\n')
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const json = JSON.parse(line.slice(6))
+                                if (json.content) { output += json.content }
+                            } catch { /* skip */ }
+                        }
+                    }
+                }
+
                 const panel = vscode.window.createWebviewPanel(
                     'jaicodeFix',
                     'Jaicode: Fix',
                     vscode.ViewColumn.Beside,
                     {}
                 )
-                panel.webview.html = getWebviewContent(data.response || 'No response')
+                panel.webview.html = getWebviewContent(output || 'No response')
+                reader.releaseLock()
             } else {
                 vscode.window.showErrorMessage(`Jaicode fix failed: HTTP ${resp.status}`)
             }

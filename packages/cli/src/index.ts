@@ -639,8 +639,8 @@ async function main(): Promise<void> {
         console.log(lang === "zh" ? `未知命令：${mode}` : `Unknown command: ${mode}`)
         printHelp(lang)
     }
-  } catch (e: any) {
-    console.error(lang === "zh" ? `错误：${e.message}` : `Error: ${e.message}`)
+  } catch (e) {
+    console.error(lang === "zh" ? `错误：${e instanceof Error ? e.message : String(e)}` : `Error: ${e instanceof Error ? e.message : String(e)}`)
     if (verbose) {
       console.error(e.stack)
     }

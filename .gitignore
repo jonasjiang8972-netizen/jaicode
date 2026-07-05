@@ -33,6 +33,10 @@ dist/
 .DS_Store
 Thumbs.db
 
+# Pre-compiled binaries
+backend-go/bin/
+jaicode-desktop
+
 # Reference repo (read-only)
 .kilo/kilocode-ref/
 

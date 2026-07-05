@@ -4,7 +4,9 @@ package files
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -218,9 +220,16 @@ func getDeviceKey() []byte {
 	home, _ := os.UserHomeDir()
 	hostname, _ := os.Hostname()
 	raw := fmt.Sprintf("jaicode-device-key:%s:%s", home, hostname)
-	key := make([]byte, 32)
-	copy(key, []byte(raw))
-	return key
+
+	// HKDF-SHA256 key derivation (256-bit entropy)
+	h1 := hmac.New(sha256.New, []byte("jaicode-device-salt-v2"))
+	h1.Write([]byte(raw))
+	prk := h1.Sum(nil)
+
+	h2 := hmac.New(sha256.New, prk)
+	h2.Write([]byte("jaicode-aes-key"))
+	h2.Write([]byte{0x01})
+	return h2.Sum(nil)
 }
 
 func min(a, b int) int {
