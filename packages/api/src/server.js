@@ -4,9 +4,6 @@
  * Port: 3002 (configurable)
  */
 
-import http from 'node:http'
-import { metrics } from '../tui-node/src/observability/metrics.js'
-
 const PORT = process.env.JAICODE_PORT || 3002
 const API_KEY = process.env.JAICODE_API_KEY
 
@@ -51,6 +48,10 @@ function sendError(res, status, code, message) {
 }
 
 // ─── SSE Helper ────────────────────────────────────────
+function sendSSE(res, event, data) {
+  res.write(`event: ${event}\n`)
+  res.write(`data: ${JSON.stringify(data)}\n\n`)
+}
 
 // ─── Routes ────────────────────────────────────────────
 const routes = {
@@ -317,6 +318,17 @@ export function startServer(port = PORT) {
 
   return server
 }
+
+// ─── Error Handlers ────────────────────────────────────
+process.on('uncaughtException', (err) => {
+  console.error('[Jaicode] Uncaught exception:', err.message)
+  // Keep process alive - log and continue
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[Jaicode] Unhandled rejection:', reason)
+  // Keep process alive - log and continue
+})
 
 // ─── Entry ─────────────────────────────────────────────
 if (import.meta.url === `file://${process.argv[1]}`) {
