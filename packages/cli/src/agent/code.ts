@@ -18,11 +18,7 @@ export class CodeHandler implements AgentModeHandler {
   }
 
   getSystemPrompt(ctx: AgentContext): string {
-    const lang = (ctx.userProfile?.outputPreferences as any)?.language || "zh"
-    const projectCtx = ctx.projectConfig
-      ? `\n\nProject context:\n${JSON.stringify(ctx.projectConfig, null, 2)}`
-      : ""
-
+    const lang = ctx.userProfile?.outputPreferences?.language || "zh"
     if (lang === "zh") {
       return `你是一个编程助手。用户描述代码修改需求，你需要：
 1. 分析需求

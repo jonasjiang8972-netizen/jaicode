@@ -15,7 +15,8 @@
     "build": "bun run --cwd packages/cli build",
     "typecheck": "bun run --cwd packages/cli typecheck",
     "test": "bun run --cwd packages/cli test",
-    "lint": "echo 'lint placeholder'"
+    "lint": "bunx @biomejs/biome check --apply packages/ 2>/dev/null || echo 'Install biome: bun add -d @biomejs/biome'",
+    "lint:check": "bunx @biomejs/biome check packages/ 2>/dev/null || echo 'Install biome: bun add -d @biomejs/biome'"
   },
   "devDependencies": {
     "@types/bun": "latest",

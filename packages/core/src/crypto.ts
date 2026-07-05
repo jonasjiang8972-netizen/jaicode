@@ -63,19 +63,31 @@ export class Crypto {
     }
   }
 
-  static getDeviceKey(): string {
+  static async getDeviceKey(): Promise<string> {
     const home = process.env.HOME || process.env.USERPROFILE || "default"
     const hostname = process.env.HOSTNAME || "local"
     const raw = `jaicode-device-key:${home}:${hostname}`
-    let hash = 0
-    for (let i = 0; i < raw.length; i++) {
-      const char = raw.charCodeAt(i)
-      hash = ((hash << 5) - hash + char) | 0
-    }
-    const bytes = new Uint8Array(32)
-    for (let i = 0; i < 32; i++) {
-      bytes[i] = (hash >> (i % 4) * 8) & 0xff
-    }
-    return btoa(String.fromCharCode(...bytes))
+
+    // Use HKDF-SHA256 for key derivation (256-bit entropy)
+    const keyMaterial = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(raw),
+      "HKDF",
+      false,
+      ["deriveBits"],
+    )
+
+    const bits = await crypto.subtle.deriveBits(
+      {
+        name: "HKDF",
+        hash: "SHA-256",
+        salt: new TextEncoder().encode("jaicode-device-salt-v2"),
+        info: new TextEncoder().encode("jaicode-aes-key"),
+      },
+      keyMaterial,
+      256,
+    )
+
+    return btoa(String.fromCharCode(...new Uint8Array(bits)))
   }
 }

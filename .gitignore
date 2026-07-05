@@ -1,10 +1,7 @@
 # Dependencies
 node_modules/
+bun.lock
 bun.lockb
-
-# Build
-dist/
-*.tsbuildinfo
 
 # Build
 dist/
@@ -13,6 +10,19 @@ dist/
 # Jaicode runtime
 .jaicode/
 .jaicode_backup/
+
+# Security sensitive
+.env
+.env.*
+*.key
+*.pem
+*.secret
+
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
 
 # Editor
 .vscode/
@@ -25,3 +35,10 @@ Thumbs.db
 
 # Reference repo (read-only)
 .kilo/kilocode-ref/
+
+# Logs
+*.log
+logs/
+
+# Tauri
+src-tauri/target/

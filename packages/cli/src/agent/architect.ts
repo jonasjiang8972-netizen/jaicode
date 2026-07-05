@@ -66,7 +66,7 @@ Save the ADR as ADR.md in the project directory.`
   }
 
   async execute(ctx: AgentContext, task: string): Promise<AgentResult> {
-    const lang = (ctx.userProfile?.outputPreferences as any)?.language || "zh"
+    const lang = ctx.userProfile?.outputPreferences?.language || "zh"
     const structure = await ContextBuilder.readProjectStructure(ctx.cwd, 3)
 
     const messages: LLMMessage[] = [
