@@ -115,7 +115,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     })
 
-    // Command: Fix code
+    // Command: Fix code (P1-4: real implementation)
     const fixCmd = vscode.commands.registerCommand('jaicode.fix', async () => {
         const editor = vscode.window.activeTextEditor
         if (!editor) return
@@ -123,7 +123,35 @@ export function activate(context: vscode.ExtensionContext) {
         const selection = editor.document.getText(editor.selection)
         if (!selection) return
 
-        vscode.window.showInformationMessage('Fix request sent to Jaicode')
+        try {
+            const config = vscode.workspace.getConfiguration('jaicode')
+            const port = config.get('port', 3003)
+
+            const resp = await fetch(`http://localhost:${port}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: `Fix issues in this code:\n\`\`\`\n${selection}\n\`\`\``,
+                    mode: 'debug',
+                    provider: config.get('provider', 'anthropic'),
+                }),
+            })
+
+            if (resp.ok) {
+                const data = await resp.json()
+                const panel = vscode.window.createWebviewPanel(
+                    'jaicodeFix',
+                    'Jaicode: Fix',
+                    vscode.ViewColumn.Beside,
+                    {}
+                )
+                panel.webview.html = getWebviewContent(data.response || 'No response')
+            } else {
+                vscode.window.showErrorMessage(`Jaicode fix failed: HTTP ${resp.status}`)
+            }
+        } catch {
+            vscode.window.showErrorMessage('Error: Jaicode backend not running. Start with: jaicode-desktop')
+        }
     })
 
     context.subscriptions.push(startCmd, sendCmd, explainCmd, fixCmd)

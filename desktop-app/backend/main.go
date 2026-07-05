@@ -3,8 +3,11 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -134,26 +137,22 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Knowledge freshness check
-	freshness := checkFreshness(filtered)
-
-	// Build response (currently uses template - LLM integration ready)
-	response := buildResponse(filtered, mode, freshness)
+	freshnessNote := checkFreshness(filtered)
 
 	// Stream SSE response
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
-
 	flusher := w.(http.Flusher)
-	chunks := strings.Split(response, "\n")
-	for _, chunk := range chunks {
-		if chunk = strings.TrimSpace(chunk); chunk != "" {
-			fmt.Fprintf(w, "data: {\"type\":\"text\",\"content\":\"%s\\n\"}\n\n", escapeSSE(chunk))
-			flusher.Flush()
-			time.Sleep(20 * time.Millisecond)
-		}
+
+	// System prompt with freshness note
+	systemPrompt := buildSystemPrompt(mode, freshnessNote)
+	messages := []map[string]string{
+		{"role": "system", "content": systemPrompt},
+		{"role": "user", "content": filtered},
 	}
-	fmt.Fprintf(w, "data: {\"type\":\"done\"}\n\n")
-	flusher.Flush()
+
+	// Call real LLM provider with retry
+	callLLM(req.Provider, messages, w, flusher)
 }
 
 func handleFileRead(w http.ResponseWriter, r *http.Request) {
@@ -521,4 +520,199 @@ func escapeSSE(s string) string {
 func errStr(err error) string {
 	if err == nil { return "" }
 	return err.Error()
+}
+
+func getEnv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// ─── Real LLM Integration ─────────────────────────────
+
+func buildSystemPrompt(mode, freshness string) string {
+	prompts := map[string]string{
+		"plan":  "You are an architecture design expert. Generate Architecture Decision Records (ADR).",
+		"code":  "You are a coding assistant. Output changed files in FILE: format with complete code.",
+		"debug": "You are a debugging assistant. Analyze errors and provide fixes with diffs.",
+		"ask":   "You are a concise Q&A assistant. Answer directly without code changes.",
+	}
+	prompt := prompts[mode]
+	if prompt == "" { prompt = prompts["code"] }
+	if freshness != "" { prompt += "\n\n" + freshness }
+	return prompt
+}
+
+func callLLM(provider string, messages []map[string]string, w http.ResponseWriter, flusher http.Flusher) {
+	cfg := getProviderConfig(provider)
+
+	var req *http.Request
+	var err error
+
+	if cfg.format == "anthropic" {
+		body := map[string]interface{}{
+			"model": cfg.model, "max_tokens": 4096, "stream": true,
+			"system": messages[0]["content"],
+			"messages": messages[1:],
+		}
+		bodyJSON, _ := json.Marshal(body)
+		req, err = http.NewRequest("POST", cfg.baseURL+"/v1/messages", bytes.NewReader(bodyJSON))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("x-api-key", cfg.apiKey)
+			req.Header.Set("anthropic-version", "2023-06-01")
+		}
+	} else {
+		body := map[string]interface{}{
+			"model": cfg.model, "max_tokens": 4096, "stream": true,
+			"messages": messages,
+		}
+		bodyJSON, _ := json.Marshal(body)
+		req, err = http.NewRequest("POST", cfg.baseURL+"/v1/chat/completions", bytes.NewReader(bodyJSON))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
+		}
+	}
+
+	if err != nil {
+		fmt.Fprintf(w, "data: {\"type\":\"error\",\"error\":\"%s\"}\n\n", escapeSSE(err.Error()))
+		flusher.Flush()
+		return
+	}
+
+	// Retry logic with exponential backoff
+	var resp *http.Response
+	maxRetries := 2
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		client := &http.Client{Timeout: 60 * time.Second}
+		resp, err = client.Do(req)
+		if err == nil && resp.StatusCode == 200 { break }
+		if attempt < maxRetries {
+			time.Sleep(time.Duration(attempt+1) * time.Second)
+			// Recreate request body (Body is consumed)
+			if cfg.format == "anthropic" {
+				body := map[string]interface{}{
+					"model": cfg.model, "max_tokens": 4096, "stream": true,
+					"system": messages[0]["content"], "messages": messages[1:],
+				}
+				bodyJSON, _ := json.Marshal(body)
+				req, _ = http.NewRequest("POST", cfg.baseURL+"/v1/messages", bytes.NewReader(bodyJSON))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("x-api-key", cfg.apiKey)
+				req.Header.Set("anthropic-version", "2023-06-01")
+			} else {
+				body := map[string]interface{}{
+					"model": cfg.model, "max_tokens": 4096, "stream": true, "messages": messages,
+				}
+				bodyJSON, _ := json.Marshal(body)
+				req, _ = http.NewRequest("POST", cfg.baseURL+"/v1/chat/completions", bytes.NewReader(bodyJSON))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
+			}
+		}
+	}
+
+	if err != nil || resp.StatusCode != 200 {
+		msg := "LLM API error"
+		if resp != nil {
+			body, _ := io.ReadAll(resp.Body)
+			msg = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body)[:200])
+		}
+		fmt.Fprintf(w, "data: {\"type\":\"error\",\"error\":\"%s\"}\n\n", escapeSSE(msg))
+		flusher.Flush()
+		return
+	}
+
+	defer resp.Body.Close()
+	reader := bufio.NewReader(resp.Body)
+	var fullContent strings.Builder
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err == io.EOF { break }
+		if err != nil { break }
+
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data: ") { continue }
+		data := line[6:]
+		if data == "[DONE]" {
+			fmt.Fprintf(w, "data: {\"type\":\"done\"}\n\n")
+			flusher.Flush()
+			return
+		}
+
+		// Parse chunk based on format
+		var chunk struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+			Delta struct {
+				Text string `json:"text"`
+			} `json:"delta"`
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Type string `json:"type"`
+		}
+
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil { continue }
+
+		var content string
+		if chunk.Type == "content_block_delta" && chunk.Delta.Text != "" {
+			content = chunk.Delta.Text
+		} else if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+			content = chunk.Choices[0].Delta.Content
+		} else if len(chunk.Content) > 0 && chunk.Content[0].Type == "text" {
+			content = chunk.Content[0].Text
+		}
+
+		if content != "" {
+			fullContent.WriteString(content)
+			fmt.Fprintf(w, "data: {\"type\":\"text\",\"content\":\"%s\"}\n\n", escapeSSE(content))
+			flusher.Flush()
+		}
+	}
+
+	fmt.Fprintf(w, "data: {\"type\":\"done\"}\n\n")
+	flusher.Flush()
+}
+
+type llmConfig struct {
+	apiKey   string
+	baseURL  string
+	model    string
+	format   string // anthropic or openai
+}
+
+func getProviderConfig(name string) llmConfig {
+	if name == "" {
+		name = os.Getenv("JAICODE_PROVIDER")
+		if name == "" { name = "custom" }
+	}
+
+	apiKey := os.Getenv(strings.ToUpper(name) + "_API_KEY")
+	if apiKey == "" { apiKey = os.Getenv("ANTHROPIC_API_KEY") }
+
+	var baseURL, model, format string
+	switch name {
+	case "anthropic":
+		baseURL = "https://api.anthropic.com"
+		model = "claude-sonnet-4-20250514"
+		format = "anthropic"
+	case "openai":
+		baseURL = "https://api.openai.com"
+		model = "gpt-4o"
+		format = "openai"
+	default:
+		baseURL = getEnv("JAICODE_API_URL", "https://api.longcat.chat/openai")
+		model = getEnv("JAICODE_MODEL", "LongCat-2.0")
+		format = "openai"
+	}
+
+	return llmConfig{apiKey: apiKey, baseURL: baseURL, model: model, format: format}
 }
