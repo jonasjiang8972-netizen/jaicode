@@ -9,15 +9,27 @@ import (
 	"fmt"
 	"io"
 	"os"
+<<<<<<< Updated upstream
+=======
+	"path"
+>>>>>>> Stashed changes
 	"path/filepath"
 	"strings"
 	"time"
 
+<<<<<<< Updated upstream
 	"go.uber.org/zap"
 )
 
 type Service struct {
 	log *zap.Logger
+=======
+	"github.com/jonasjiang8972-netizen/jaicode-go/pkg/logger"
+)
+
+type Service struct {
+	log logger.Logger
+>>>>>>> Stashed changes
 }
 
 type FileInfo struct {
@@ -32,12 +44,21 @@ type FileInfo struct {
 }
 
 type WriteResult struct {
+<<<<<<< Updated upstream
 	Path      string `json:"path"`
 	Size      int    `json:"size"`
 	BackupPath string `json:"backup_path,omitempty"`
 }
 
 func NewService(log *zap.Logger) *Service {
+=======
+	Path       string `json:"path"`
+	Size       int    `json:"size"`
+	BackupPath string `json:"backup_path,omitempty"`
+}
+
+func NewService(log logger.Logger) *Service {
+>>>>>>> Stashed changes
 	return &Service{log: log}
 }
 
@@ -107,9 +128,15 @@ func (s *Service) WriteFile(projectRoot, filePath, content string) (*WriteResult
 	if _, err := os.Stat(resolved); err == nil {
 		backupDir := filepath.Join(projectRoot, ".jaicode_backup", fmt.Sprintf("%d", time.Now().Unix()))
 		os.MkdirAll(backupDir, 0755)
+<<<<<<< Updated upstream
 		backupPath = filepath.Join(backupDir, filepath.Base(filePath))
 		if err := copyFile(resolved, backupPath); err != nil {
 			s.log.Warn("Backup failed", zap.Error(err))
+=======
+		backupPath = filepath.Join(backupDir, path.Base(filePath))
+		if err := copyFile(resolved, backupPath); err != nil {
+			s.log.Warn("Backup failed: " + err.Error())
+>>>>>>> Stashed changes
 		}
 	}
 
@@ -125,7 +152,45 @@ func (s *Service) WriteFile(projectRoot, filePath, content string) (*WriteResult
 	}, nil
 }
 
+<<<<<<< Updated upstream
 // APKeyEncrypt encrypts API key with device-specific key
+=======
+func isSensitiveFile(path string) bool {
+	sensitive := []string{".env", ".env.local", "*.key", "*.pem", "*_secret*"}
+	base := filepath.Base(path)
+	for _, pattern := range sensitive {
+		if strings.Contains(base, strings.TrimPrefix(pattern, "*")) {
+			return true
+		}
+	}
+	return false
+}
+
+func detectLanguage(filePath string) string {
+	ext := filepath.Ext(filePath)
+	langMap := map[string]string{
+		".ts": "typescript", ".tsx": "typescript",
+		".js": "javascript", ".jsx": "javascript",
+		".py": "python", ".go": "go", ".rs": "rust",
+		".java": "java", ".c": "c", ".cpp": "cpp",
+		".md": "markdown", ".json": "json", ".yaml": "yaml",
+	}
+	if lang, ok := langMap[ext]; ok {
+		return lang
+	}
+	return "text"
+}
+
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0644)
+}
+
+// EncryptAPIKey encrypts API key with device-specific key
+>>>>>>> Stashed changes
 func EncryptAPIKey(plaintext string) (string, error) {
 	key := getDeviceKey()
 	block, err := aes.NewCipher(key)
@@ -147,7 +212,11 @@ func EncryptAPIKey(plaintext string) (string, error) {
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
+<<<<<<< Updated upstream
 // APKeyDecrypt decrypts API key
+=======
+// DecryptAPIKey decrypts API key
+>>>>>>> Stashed changes
 func DecryptAPIKey(ciphertext string) (string, error) {
 	key := getDeviceKey()
 	data, err := base64.StdEncoding.DecodeString(ciphertext)
@@ -179,6 +248,7 @@ func DecryptAPIKey(ciphertext string) (string, error) {
 	return string(plaintext), nil
 }
 
+<<<<<<< Updated upstream
 // Helpers
 func isSensitiveFile(path string) bool {
 	sensitive := []string{".env", ".env.local", "*.key", "*.pem", "*_secret*"}
@@ -203,20 +273,33 @@ func detectLanguage(filePath string) string {
 	return langMap[ext]
 }
 
+=======
+>>>>>>> Stashed changes
 func getDeviceKey() []byte {
 	home, _ := os.UserHomeDir()
 	hostname, _ := os.Hostname()
 	raw := fmt.Sprintf("jaicode-device-key:%s:%s", home, hostname)
+<<<<<<< Updated upstream
 	// Derive 32-byte key
+=======
+>>>>>>> Stashed changes
 	key := make([]byte, 32)
 	copy(key, []byte(raw))
 	return key
 }
 
+<<<<<<< Updated upstream
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(dst, data, 0644)
+=======
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+>>>>>>> Stashed changes
 }

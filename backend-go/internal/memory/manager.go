@@ -1,8 +1,12 @@
+<<<<<<< Updated upstream
 // Jaicode Memory System - Project memory + user profile + knowledge freshness
+=======
+>>>>>>> Stashed changes
 package memory
 
 import (
 	"encoding/json"
+<<<<<<< Updated upstream
 	"fmt"
 	"os"
 	"path/filepath"
@@ -53,6 +57,38 @@ type UserPreferences struct {
 type HistoryEntry struct {
 	Date    string `json:"date"`
 	Actions string `json:"actions"`
+=======
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/jonasjiang8972-netizen/jaicode-go/pkg/logger"
+)
+
+const KnowledgeCutoff = "2025-01-01"
+
+type Manager struct {
+	log    logger.Logger
+	root   string
+}
+
+type ProjectMemory struct {
+	Project     ProjectInfo     `json:"project"`
+	Preferences UserPreferences `json:"preferences"`
+	LastScan    time.Time       `json:"last_scan"`
+}
+
+type ProjectInfo struct {
+	Name        string   `json:"name"`
+	TechStack   []string `json:"tech_stack"`
+	Directories []string `json:"directories"`
+}
+
+type UserPreferences struct {
+	Language  string `json:"language"`
+	Verbosity string `json:"verbosity"`
+>>>>>>> Stashed changes
 }
 
 type FreshnessResult struct {
@@ -62,6 +98,7 @@ type FreshnessResult struct {
 	Modified        bool   `json:"modified"`
 }
 
+<<<<<<< Updated upstream
 type Manager struct {
 	log      *zap.Logger
 	projectDir string
@@ -170,6 +207,39 @@ func (m *Manager) AutoScan() (*ProjectInfo, error) {
 	info := &ProjectInfo{}
 
 	pkgPath := filepath.Join(m.projectDir, "package.json")
+=======
+func NewManager(log logger.Logger, root string) *Manager {
+	return &Manager{log: log, root: root}
+}
+
+func (m *Manager) CheckFreshness(input string) FreshnessResult {
+	result := FreshnessResult{}
+	for _, year := range []string{"2026", "2027", "2028"} {
+		if strings.Contains(input, year) {
+			result.IsTimeSensitive = true
+			result.DetectedYear = year
+			result.Modified = true
+			result.Hint = "Knowledge cutoff: " + KnowledgeCutoff + ". User asks about " + year + "."
+			return result
+		}
+	}
+	keywords := []string{"latest", "recent", "new", "最新", "最近"}
+	for _, kw := range keywords {
+		if strings.Contains(strings.ToLower(input), kw) {
+			result.IsTimeSensitive = true
+			result.Modified = true
+			result.Hint = "Time-sensitive keyword: " + kw
+			return result
+		}
+	}
+	return result
+}
+
+func (m *Manager) AutoScan() (*ProjectInfo, error) {
+	info := &ProjectInfo{Directories: []string{}}
+
+	pkgPath := filepath.Join(m.root, "package.json")
+>>>>>>> Stashed changes
 	if data, err := os.ReadFile(pkgPath); err == nil {
 		var pkg struct {
 			Name         string            `json:"name"`
@@ -177,6 +247,7 @@ func (m *Manager) AutoScan() (*ProjectInfo, error) {
 		}
 		json.Unmarshal(data, &pkg)
 		info.Name = pkg.Name
+<<<<<<< Updated upstream
 		info.TechStack = detectTechStack(pkg.Dependencies)
 		info.EntryPoints = findEntryPoints(pkg.Dependencies)
 	} else {
@@ -187,12 +258,34 @@ func (m *Manager) AutoScan() (*ProjectInfo, error) {
 	for _, entry := range entries {
 		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") && entry.Name() != "node_modules" {
 			info.Directories = append(info.Directories, entry.Name())
+=======
+		// Detect tech stack
+		for dep := range pkg.Dependencies {
+			switch {
+			case strings.Contains(dep, "react"):
+				info.TechStack = append(info.TechStack, "react")
+			case strings.Contains(dep, "vue"):
+				info.TechStack = append(info.TechStack, "vue")
+			case strings.Contains(dep, "typescript"):
+				info.TechStack = append(info.TechStack, "typescript")
+			}
+		}
+	} else {
+		info.Name = filepath.Base(m.root)
+	}
+
+	entries, _ := os.ReadDir(m.root)
+	for _, e := range entries {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && e.Name() != "node_modules" {
+			info.Directories = append(info.Directories, e.Name())
+>>>>>>> Stashed changes
 		}
 	}
 
 	return info, nil
 }
 
+<<<<<<< Updated upstream
 func detectTechStack(deps map[string]string) []string {
 	stack := []string{}
 	mappings := map[string]string{
@@ -216,4 +309,25 @@ func findEntryPoints(deps map[string]string) []string {
 		return []string{"src/main.ts"}
 	}
 	return []string{"src/"}
+=======
+func (m *Manager) LoadUserProfile() (*UserPreferences, error) {
+	home, _ := os.UserHomeDir()
+	data, err := os.ReadFile(filepath.Join(home, ".jaicode", "user.profile"))
+	if err != nil {
+		return &UserPreferences{Language: "zh"}, nil
+	}
+	var p UserPreferences
+	json.Unmarshal(data, &p)
+	return &p, nil
+}
+
+func (m *Manager) LoadProjectMemory() (*ProjectMemory, error) {
+	data, err := os.ReadFile(filepath.Join(m.root, ".jaicode", "memory.json"))
+	if err != nil {
+		return nil, err
+	}
+	var mem ProjectMemory
+	json.Unmarshal(data, &mem)
+	return &mem, nil
+>>>>>>> Stashed changes
 }

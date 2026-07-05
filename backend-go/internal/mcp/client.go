@@ -5,16 +5,27 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+<<<<<<< Updated upstream
+=======
+	"github.com/jonasjiang8972-netizen/jaicode-go/pkg/logger"
+>>>>>>> Stashed changes
 	"io"
 	"os/exec"
 	"sync"
 	"time"
 
+<<<<<<< Updated upstream
 	"go.uber.org/zap"
 )
 
 type Client struct {
 	log     *zap.Logger
+=======
+)
+
+type Client struct {
+	log     logger.Logger
+>>>>>>> Stashed changes
 	clients map[string]*MCPProcess
 	mu      sync.Mutex
 }
@@ -36,7 +47,11 @@ type MCPTool struct {
 	InputSchema json.RawMessage `json:"input_schema"`
 }
 
+<<<<<<< Updated upstream
 func NewClient(log *zap.Logger) *Client {
+=======
+func NewClient(log logger.Logger) *Client {
+>>>>>>> Stashed changes
 	return &Client{log: log, clients: make(map[string]*MCPProcess)}
 }
 
@@ -117,7 +132,11 @@ func (c *Client) Connect(name, command string, args []string) error {
 	}
 
 	c.clients[name] = proc
+<<<<<<< Updated upstream
 	c.log.Info("MCP connected", zap.String("name", name), zap.Int("tools", len(proc.Tools)))
+=======
+	c.log.Info(fmt.Sprintf("MCP connected: %s (%d tools)", name, len(proc.Tools)))
+>>>>>>> Stashed changes
 
 	return nil
 }

@@ -1,6 +1,7 @@
 module github.com/jonasjiang8972-netizen/jaicode-go
 
 go 1.22
+<<<<<<< Updated upstream
 
 require (
 	github.com/fsnotify/fsnotify v1.7.0
@@ -13,3 +14,5 @@ require (
 	google.golang.org/grpc v1.66.0
 	google.golang.org/protobuf v1.34.2
 )
+=======
+>>>>>>> Stashed changes

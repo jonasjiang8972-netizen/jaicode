@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 // Jaicode Context Compaction - Token management + LCS summarization
 package context
 
@@ -5,12 +6,20 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+=======
+package context
+
+import (
+	"strconv"
+	"strings"
+>>>>>>> Stashed changes
 )
 
 func EstimateTokens(text string) int {
 	if text == "" {
 		return 0
 	}
+<<<<<<< Updated upstream
 	cjkCount := 0
 	otherCount := 0
 	for _, r := range text {
@@ -27,10 +36,33 @@ func CountMessagesTokens(messages []Message) int {
 	total := 0
 	for _, msg := range messages {
 		total += EstimateTokens(msg.Content) + 4
+=======
+	cjk, other := 0, 0
+	for _, r := range text {
+		if r >= 0x4e00 && r <= 0x9fff {
+			cjk++
+		} else {
+			other++
+		}
+	}
+	return other/4 + cjk/2 + 1
+}
+
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+func CountTokens(messages []Message) int {
+	total := 0
+	for _, m := range messages {
+		total += EstimateTokens(m.Content) + 4
+>>>>>>> Stashed changes
 	}
 	return total
 }
 
+<<<<<<< Updated upstream
 func ShouldCompact(messages []Message, maxTokens int) bool {
 	return CountMessagesTokens(messages) > maxTokens
 }
@@ -107,3 +139,46 @@ type Message struct {
 	Compacted bool   `json:"compacted,omitempty"`
 	Timestamp int64  `json:"ts,omitempty"`
 }
+=======
+func ShouldCompact(messages []Message, max int) bool {
+	return CountTokens(messages) > max
+}
+
+func Compact(messages []Message, max int) ([]Message, bool) {
+	if CountTokens(messages) <= max {
+		return messages, false
+	}
+	if len(messages) <= 6 {
+		return messages, false
+	}
+	// Keep first system + last 4, summarize the middle
+	result := []Message{messages[0]}
+	middle := messages[1 : len(messages)-4]
+	topics := []string{}
+	for _, m := range middle {
+		if m.Role == "user" {
+			first := strings.Split(m.Content, "\n")[0]
+			if len(first) > 80 {
+				first = first[:80] + "..."
+			}
+			topics = append(topics, first)
+		}
+	}
+	result = append(result, Message{
+		Role:    "system",
+		Content: "[Compacted " + strconv.Itoa(len(middle)) + " msgs] Topics: " + strings.Join(topics[:min(5, len(topics))], "; "),
+	})
+	result = append(result, messages[len(messages)-4:]...)
+	return result, true
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// Unused but prevents import errors
+var _ = strings.Split
+>>>>>>> Stashed changes

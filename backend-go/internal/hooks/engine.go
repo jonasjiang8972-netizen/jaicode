@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+<<<<<<< Updated upstream
 	"go.uber.org/zap"
 )
 
@@ -18,6 +19,17 @@ type Engine struct {
 }
 
 func NewEngine(log *zap.Logger) *Engine {
+=======
+	"github.com/jonasjiang8972-netizen/jaicode-go/pkg/logger"
+)
+
+type Engine struct {
+	log   logger.Logger
+	hooks map[string][]string
+}
+
+func NewEngine(log logger.Logger) *Engine {
+>>>>>>> Stashed changes
 	home, _ := os.UserHomeDir()
 	configPath := filepath.Join(home, ".jaicode", "hooks.json")
 

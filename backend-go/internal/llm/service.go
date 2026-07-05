@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+<<<<<<< Updated upstream
 	"io"
 	"net/http"
 	"time"
@@ -17,6 +18,16 @@ import (
 type Service struct {
 	cfg    *config.Config
 	log    *zap.Logger
+=======
+	"github.com/jonasjiang8972-netizen/jaicode-go/pkg/logger"
+	"io"
+	"net/http"
+	"time"
+)
+
+type Service struct {
+	log    logger.Logger
+>>>>>>> Stashed changes
 	client *http.Client
 }
 
@@ -39,10 +50,16 @@ type StreamChunk struct {
 	Error   string `json:"error,omitempty"`
 }
 
+<<<<<<< Updated upstream
 func NewService(cfg *config.Config, log *zap.Logger) *Service {
 	return &Service{
 		cfg: cfg,
 		log: log,
+=======
+func NewService(log logger.Logger) *Service {
+	return &Service{
+		log:    log,
+>>>>>>> Stashed changes
 		client: &http.Client{Timeout: 60 * time.Second},
 	}
 }

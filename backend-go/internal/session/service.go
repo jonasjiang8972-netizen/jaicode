@@ -4,16 +4,27 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+<<<<<<< Updated upstream
+=======
+	"github.com/jonasjiang8972-netizen/jaicode-go/pkg/logger"
+>>>>>>> Stashed changes
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
 
+<<<<<<< Updated upstream
 	"go.uber.org/zap"
 )
 
 type Service struct {
 	log      *zap.Logger
+=======
+)
+
+type Service struct {
+	log      logger.Logger
+>>>>>>> Stashed changes
 	basePath string
 }
 
@@ -31,7 +42,11 @@ type Message struct {
 	Timestamp int64  `json:"ts"`
 }
 
+<<<<<<< Updated upstream
 func NewService(log *zap.Logger) *Service {
+=======
+func NewService(log logger.Logger) *Service {
+>>>>>>> Stashed changes
 	home, _ := os.UserHomeDir()
 	basePath := filepath.Join(home, ".jaicode", "sessions")
 	os.MkdirAll(basePath, 0755)
@@ -56,7 +71,11 @@ func (s *Service) Save(pid int, cwd, mode string, messages []Message) error {
 	return os.WriteFile(filepath.Join(s.basePath, filename), data, 0644)
 }
 
+<<<<<<< Updated upstream
 func (s *Session) List() ([]Session, error) {
+=======
+func (s *Service) List() ([]Session, error) {
+>>>>>>> Stashed changes
 	files, err := os.ReadDir(s.basePath)
 	if err != nil {
 		return nil, err
