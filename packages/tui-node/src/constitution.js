@@ -61,6 +61,13 @@ Language: {{LANGUAGE}}
 - Major: architecture changes (0.x.0 → 1.0.0)
 - NEVER skip version numbers
 
+## Dual-Language Versioning
+- main branch (TypeScript backend): v0.13.x
+- feat/go-backend branch (Go backend): v0.14.x
+- Each branch tracks its own version independently
+- Cross-branch features must be synchronized
+- Merged changes take the higher version number
+
 ## Project Context
 {{PROJECT_CONTEXT}}
 

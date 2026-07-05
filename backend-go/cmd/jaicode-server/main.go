@@ -1,4 +1,6 @@
 // Jaicode Go Backend - Main Entry Point
+// Version: Dual-language policy - Go branch starts at v0.14.0
+// See VERSION_POLICY.md for details
 package main
 
 import (
