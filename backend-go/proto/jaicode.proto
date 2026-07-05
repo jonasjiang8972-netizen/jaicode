@@ -1,0 +1,106 @@
+syntax = "proto3";
+
+package jaicode;
+
+option go_package = "github.com/jonasjiang8972-netizen/jaicode-go/proto";
+
+// Jaicode service definition
+service JaicodeService {
+  rpc Chat(ChatRequest) returns (stream ChatResponse);
+  rpc ReadFile(FileRequest) returns (FileResponse);
+  rpc WriteFile(WriteRequest) returns (WriteResponse);
+  rpc ExecuteCommand(CommandRequest) returns (CommandResponse);
+  rpc GitStatus(Empty) returns (GitStatusResponse);
+  rpc GitCommit(GitCommitRequest) returns (Empty);
+  rpc ListSessions(Empty) returns (SessionList);
+  rpc HealthCheck(Empty) returns (HealthResponse);
+}
+
+message ChatRequest {
+  string message = 1;
+  string mode = 2;
+  string provider = 3;
+  repeated Message history = 4;
+}
+
+message Message {
+  string role = 1;
+  string content = 2;
+}
+
+message ChatResponse {
+  string type = 1; // "text", "tool_call", "done", "error"
+  string content = 2;
+  string error = 3;
+}
+
+message FileRequest {
+  string path = 1;
+  int64 max_bytes = 2;
+}
+
+message FileResponse {
+  bool found = 1;
+  string content = 2;
+  string language = 3;
+  int32 lines = 4;
+  string error = 5;
+}
+
+message WriteRequest {
+  string path = 1;
+  string content = 2;
+}
+
+message WriteResponse {
+  bool success = 1;
+  int32 size = 2;
+  string backup_path = 3;
+  string error = 4;
+}
+
+message CommandRequest {
+  string command = 1;
+  bool require_confirmation = 2;
+}
+
+message CommandResponse {
+  bool executed = 1;
+  string stdout = 2;
+  string stderr = 3;
+  int32 exit_code = 4;
+}
+
+message GitStatusResponse {
+  bool clean = 1;
+  repeated GitFile files = 2;
+  int32 count = 3;
+}
+
+message GitFile {
+  string status = 1;
+  string path = 2;
+}
+
+message GitCommitRequest {
+  string message = 1;
+  repeated string files = 2;
+}
+
+message SessionInfo {
+  int32 pid = 1;
+  string cwd = 2;
+  int32 message_count = 3;
+  bool active = 4;
+}
+
+message SessionList {
+  repeated SessionInfo sessions = 1;
+}
+
+message HealthResponse {
+  string status = 1;
+  string version = 2;
+}
+
+message Empty {}
