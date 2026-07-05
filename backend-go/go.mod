@@ -1,18 +1,12 @@
 module github.com/jonasjiang8972-netizen/jaicode-go
 
 go 1.22
-<<<<<<< Updated upstream
+
+require go.uber.org/zap v1.27.0
 
 require (
-	github.com/fsnotify/fsnotify v1.7.0
-	github.com/google/uuid v1.6.0
-	github.com/spf13/cobra v1.8.1
-	github.com/spf13/viper v1..0
-	go.uber.org/zap v1.27.0
-	golang.org/x/net v0.28.0
-	golang.org/x/sync v0.8.0
-	google.golang.org/grpc v1.66.0
-	google.golang.org/protobuf v1.34.2
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
+	github.com/stretchr/testify v1.9.0 // indirect
+	go.uber.org/multierr v1.10.0 // indirect
 )
-=======
->>>>>>> Stashed changes
