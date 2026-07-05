@@ -1,0 +1,73 @@
+{
+  "name": "jaicode",
+  "displayName": "Jaicode",
+  "description": "Local-first AI coding agent for VS Code",
+  "version": "0.12.0",
+  "publisher": "jaicode",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["AI", "Chat", "Programming Languages"],
+  "activationEvents": ["onCommand:jaicode.start"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "jaicode.start",
+        "title": "Jaicode: Start Session"
+      },
+      {
+        "command": "jaicode.send",
+        "title": "Jaicode: Send Selection"
+      },
+      {
+        "command": "jaicode.explain",
+        "title": "Jaicode: Explain Code"
+      },
+      {
+        "command": "jaicode.fix",
+        "title": "Jaicode: Fix Selection"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "jaicode.explain",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "jaicode.fix",
+          "when": "editorHasSelection"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Jaicode",
+      "properties": {
+        "jaicode.provider": {
+          "type": "string",
+          "default": "anthropic",
+          "description": "LLM Provider"
+        },
+        "jaicode.model": {
+          "type": "string",
+          "default": "claude-sonnet-4-20250514",
+          "description": "Model name"
+        },
+        "jaicode.port": {
+          "type": "number",
+          "default": 3002,
+          "description": "API server port"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.6.0"
+  }
+}

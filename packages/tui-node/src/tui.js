@@ -18,7 +18,7 @@ import { Analytics } from './analytics.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // ─── Version ───────────────────────────────────────────
-const VERSION = '0.12.0'
+const VERSION = '0.20.0'
 
 // ─── Mascot ────────────────────────────────────────────
 const jai = new JaiMascot()
@@ -38,6 +38,12 @@ import { handleFile, detectFilePaths } from './filesystem/file-handler.js'
 import { readClipboardImage } from './filesystem/clipboard-monitor.js'
 import { loadHistory, saveToHistory, autocomplete } from './input/history.js'
 import { loadConstitution, saveUserConstitution, getConstitutionInfo } from './constitution.js'
+import { initLogger, info, debug, warn, error, setLevel } from './logging/logger.js'
+import { analyzeImageFile } from './multimodal/vl-analyzer.js'
+import { decomposeTask, runSubAgent } from './agents/sub-agent.js'
+import { startWebTerminal, stopWebTerminal, checkWebTerminal } from './web/web-terminal.js'
+import { validateConfig, autoFixConfig } from './config/validation.js'
+import { startWithResilience, checkHealth, stopDaemon } from './resilience/daemon.js'
 import { detectImagePaths, validateImage, readImageBase64, getMimeType } from './multimodal/image-handler.js'
 
 // ─── P1: Intent & Memory ──────────────────────────────
@@ -396,7 +402,7 @@ async function callLLM(messages) {
 
   // Inject constitution as the first system message
   const constitution = loadConstitution({
-    VERSION: '0.11.0',
+    VERSION: '0.20.0',
     MODE: state.mode,
     LANGUAGE: state.lang === 'zh' ? 'Chinese' : 'English',
     PROJECT_CONTEXT: state.projectSummary || 'No project scan available',
@@ -798,10 +804,23 @@ Always respond in the user's language preference.`,
 }
 
 async function main() {
+  // Initialize logger
+  initLogger({ level: process.env.JAICODE_LOG_LEVEL || 'INFO' })
+  info('Jaicode starting', { version: VERSION, cwd: process.cwd() })
+
   // Check API key if not configured
   const cfg = loadConfig()
   const hasAnyKey = Object.values(cfg.providers || {}).some(p => p.apiKey) ||
                      process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY
+
+  // Validate config
+  const validation = validateConfig(cfg)
+  if (!validation.valid && hasAnyKey) {
+    warn('Config validation failed', { errors: validation.errors })
+    for (const err of validation.errors) {
+      stdout.write(c.yellow(`  ⚠ ${err}\n`))
+    }
+  }
 
   if (!hasAnyKey) {
     clearScreen()
@@ -960,9 +979,9 @@ async function main() {
       if (cmd === 'help') {
         state.messages.push({
           role: 'system',
-          content: t(
-            '命令: /quit · /clear · /mode · /stats · /config · /read <文件> · /exec <命令> · /audit · · /caps · /constitution · /fix <能力> · /paste · /git · /hooks · /mcp · · /update · /sessions',
-            'Commands: /quit · /clear · /mode · /stats · /config · /read <f> · /exec <cmd> · /audit · caps · constitution · /fix <cap> · /paste · /git · /hooks · /mcp · /update · /sessions'
+           content: t(
+            '命令: /quit · /clear · /mode · /stats · · /config · /read <文件> · /exec <命令> · /audit · · /caps · /constitution · /fix <能力> · /paste · /git · · /hooks · · /mcp · · /update · /sessions · · /image · /web · /agents · /daemon',
+            'Commands: /quit · /clear · /mode · · /stats · /config · /read <f> · /exec <cmd> · /audit · · /caps · /constitution · · /fix <cap> · · /paste · /git · · /hooks · · /mcp · · /update · /sessions · /image · · /web · /agents · /daemon'
           ),
           timestamp: Date.now(),
         })
@@ -1071,6 +1090,73 @@ async function main() {
         })
         continue
       }
+
+      // ─── Image Analysis ────────────────────────────
+      if (cmd === 'image' || cmd.startsWith('image ')) {
+        const imgPath = cmd === 'image' ? input.slice(6).trim() : input.slice(6).trim()
+        if (!imgPath) {
+          state.messages.push({ role: 'system', content: 'Usage: /image <file-or-path>', timestamp: Date.now() })
+          continue
+        }
+        state.messages.push({ role: 'system', content: `🖼️ Analyzing ${imgPath}...`, timestamp: Date.now() })
+        const cfg = loadConfig()
+        const providerCfg = cfg.providers[cfg.defaultProvider]
+        const result = await analyzeImageFile(path.resolve(state.cwd, imgPath), {
+          provider: cfg.defaultProvider,
+          apiKey: providerCfg.apiKey,
+          model: providerCfg.model,
+          baseURL: providerCfg.baseURL,
+        })
+        if (result.error) {
+          state.messages.push({ role: 'system', content: `✗ ${result.error}`, timestamp: Date.now() })
+        } else {
+          state.messages.push({ role: 'system', content: `📸 ${result.description}`, timestamp: Date.now() })
+        }
+        continue
+      }
+
+      // ─── Web Terminal ──────────────────────────────
+      if (cmd === 'web' || cmd === 'web start') {
+        const result = startWebTerminal({ cwd: state.cwd })
+        state.messages.push({ role: 'system', content: result.success ? `✓ Web terminal: ${result.url}` : `✗ ${result.error}`, timestamp: Date.now() })
+        continue
+      }
+      if (cmd === 'web stop') {
+        const result = stopWebTerminal()
+        state.messages.push({ role: 'system', content: result.success ? '✓ Web terminal stopped' : `✗ ${result.error}`, timestamp: Date.now() })
+        continue
+      }
+
+      // ─── Sub-Agents ────────────────────────────────
+      if (cmd === 'agents' || cmd.startsWith('agents ')) {
+        const taskDesc = cmd === 'agents' ? input.slice(7).trim() : input.slice(7).trim()
+        if (!taskDesc) {
+          state.messages.push({ role: 'system', content: 'Usage: /agents <description>', timestamp: Date.now() })
+          continue
+        }
+        state.messages.push({ role: 'system', content: `🤖 Spawning sub-agent: ${taskDesc}...`, timestamp: Date.now() })
+        try {
+          const result = await runSubAgent(taskDesc, state.cwd, loadConfig().providers[loadConfig().defaultProvider])
+          state.messages.push({ role: 'system', content: `✓ Agent result: ${result}`, timestamp: Date.now() })
+        } catch (e) {
+          state.messages.push({ role: 'system', content: `✗ Agent failed: ${e.message}`, timestamp: Date.now() })
+        }
+        continue
+      }
+
+      // ─── Daemon ───────────────────────────────────
+      if (cmd === 'daemon' || cmd.startsWith('daemon ')) {
+        const sub = cmd === 'daemon' ? '' : cmd.slice(7).trim()
+        if (sub === 'status' || !sub) {
+          const health = checkHealth()
+          state.messages.push({ role: 'system', content: `Daemon: ${health.healthy ? 'running (PID ' + health.pid + ')' : 'not running'}`, timestamp: Date.now() })
+        } else if (sub === 'stop') {
+          const result = stopDaemon()
+          state.messages.push({ role: 'system', content: result.success ? '✓ Daemon stopped' : `✗ ${result.error}`, timestamp: Date.now() })
+        }
+        continue
+      }
+
       if (cmd === 'fix') {
         const target = input.slice(4).trim()
         if (!target) {
