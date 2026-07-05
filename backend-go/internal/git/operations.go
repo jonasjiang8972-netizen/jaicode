@@ -3,16 +3,6 @@ package git
 
 import (
 	"fmt"
-<<<<<<< Updated upstream
-	"os/exec"
-	"strings"
-
-	"go.uber.org/zap"
-)
-
-type Operations struct {
-	log *zap.Logger
-=======
 	"github.com/jonasjiang8972-netizen/jaicode-go/pkg/logger"
 	"os/exec"
 	"strings"
@@ -21,7 +11,6 @@ type Operations struct {
 
 type Operations struct {
 	log logger.Logger
->>>>>>> Stashed changes
 }
 
 type StatusResult struct {
@@ -41,11 +30,7 @@ type BranchResult struct {
 	Branches []string `json:"branches"`
 }
 
-<<<<<<< Updated upstream
-func NewOperations(log *zap.Logger) *Operations {
-=======
 func NewOperations(log logger.Logger) *Operations {
->>>>>>> Stashed changes
 	return &Operations{log: log}
 }
 

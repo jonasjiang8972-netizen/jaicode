@@ -1,120 +1,65 @@
-// Jaicode Desktop Backend (v1.0.0)
-// Optimized for Tauri desktop integration
+// Jaicode Go Backend - Desktop Server
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/jonasjiang8972-netizen/jaicode-go/internal/agents"
 	"github.com/jonasjiang8972-netizen/jaicode-go/internal/audit"
-	"github.com/jonasjiang8972-netizen/jaicode-go/internal/capabilities"
-	"github.com/jonasjiang8972-netizen/jaicode-go/internal/context"
 	"github.com/jonasjiang8972-netizen/jaicode-go/internal/files"
 	"github.com/jonasjiang8972-netizen/jaicode-go/internal/git"
-	"github.com/jonasjiang8972-netizen/jaicode-go/internal/hooks"
-	"github.com/jonasjiang8972-netizen/jaicode-go/internal/llm"
-	"github.com/jonasjiang8972-netizen/jaicode-go/internal/mcp"
 	"github.com/jonasjiang8972-netizen/jaicode-go/internal/memory"
-	"github.com/jonasjiang8972-netizen/jaicode-go/internal/metrics"
-	"github.com/jonasjiang8972-netizen/jaicode-go/internal/session"
-	"github.com/jonasjiang8972-netizen/jaicode-go/internal/vl"
-	"github.com/jonasjiang8972-netizen/jaicode-go/internal/web"
 	"github.com/jonasjiang8972-netizen/jaicode-go/pkg/logger"
-	"github.com/jonasjiang8972-netizen/jaicode-go/pkg/security"
+	security "github.com/jonasjiang8972-netizen/jaicode-go/pkg/security"
 )
 
-const VERSION = "1.0.0"
+const VERSION = "0.15.0"
 
 var (
-	cwd, _       = os.Getwd()
-	log          logger.Logger
-	fileSvc      *files.Service
-	llmSvc       *llm.Service
-	sessionSvc   *session.Service
-	hooksEngine  *hooks.Engine
-	mcpClient    *mcp.Client
-	gitOps       *git.Operations
-	auditLog     *audit.Logger
-	memMgr       *memory.Manager
-	vlAnalyzer   *vl.Analyzer
-	webServer    *web.Server
-	agentPool    *agents.AgentPool
-	inputFilter  *security.InputFilter
-	outputFilter *security.OutputFilter
+	cwd, _      = os.Getwd()
+	log         logger.Logger
+	fileSvc     *files.Service
+	mgr         *memory.Manager
+	auditLogger *audit.Logger
+	inputFilter *security.InputFilter
 )
+
+type llmConfig struct {
+	apiKey  string
+	baseURL string
+	model   string
+	format  string
+}
 
 func main() {
 	var err error
-
-	log, err = logger.NewLogger(getEnv("JAICODE_LOG_LEVEL", "INFO"))
+	log, err = logger.NewLogger("INFO")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Logger init failed:", err)
 		os.Exit(1)
 	}
 	defer log.Sync()
 
-	log.Info("Jaicode Desktop Backend v" + VERSION)
-	log.Info("Working directory: " + cwd)
+	log.Info("Jaicode Go Backend v" + VERSION)
 
-	initServices()
-	setupRoutes()
-
-	port := getPort()
-	health()
-
-	srv := &http.Server{Addr: ":" + strconv.Itoa(port), Handler: router()}
-
-	go func() {
-		<-signalChan()
-		log.Info("Shutting down Jaicode Desktop Backend...")
-		auditLog.Log("shutdown", "system", "graceful", "ALLOWED", "")
-		srv.Close()
-	}()
-
-	log.Info("Jaicode Desktop Backend ready on port " + strconv.Itoa(port))
-	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-		log.Error("Server failed: " + err.Error())
-	}
-}
-
-func initServices() {
 	fileSvc = files.NewService(log)
-	llmSvc = llm.NewService(log)
-	sessionSvc = session.NewService(log)
-	hooksEngine = hooks.NewEngine(log)
-	mcpClient = mcp.NewClient(log)
-	gitOps = git.NewOperations(log)
-	memMgr = memory.NewManager(log, cwd)
-	vlAnalyzer = vl.NewAnalyzer(log)
-	webServer = web.NewServer(log)
-	agentPool = agents.NewPool(log, 4)
+	mgr = memory.NewManager(log, cwd)
 	inputFilter = security.NewInputFilter()
-	outputFilter = security.NewOutputFilter()
 
-	var err error
-	auditLog, err = audit.NewLogger(cwd)
-	if err != nil {
-		log.Warn("Audit logger init failed: " + err.Error())
-	}
-	defer auditLog.Close()
+	auditLogger, _ = audit.NewLogger(cwd)
 
-	if info, err := memMgr.AutoScan(); err == nil {
-		log.Info(fmt.Sprintf("Project scanned: %s (%s)", info.Name, strings.Join(info.TechStack, ", ")))
-	}
-}
-
-func setupRoutes() {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("/api/health", handleHealth)
 	mux.HandleFunc("/api/chat", handleChat)
 	mux.HandleFunc("/api/file/read", handleFileRead)
 	mux.HandleFunc("/api/file/write", handleFileWrite)
@@ -123,36 +68,35 @@ func setupRoutes() {
 	mux.HandleFunc("/api/git/commit", handleGitCommit)
 	mux.HandleFunc("/api/git/branch", handleGitBranch)
 	mux.HandleFunc("/api/git/log", handleGitLog)
-	mux.HandleFunc("/api/git/diff", handleGitDiff)
-	mux.HandleFunc("/api/sessions", handleSessions)
-	mux.HandleFunc("/api/health", handleHealth)
-	mux.HandleFunc("/api/audit", handleAudit)
-	mux.HandleFunc("/api/memory", handleMemory)
-	mux.HandleFunc("/api/compact", handleCompact)
 	mux.HandleFunc("/api/caps", handleCaps)
-	mux.HandleFunc("/api/vl/analyze", handleVLAnalyze)
-	mux.HandleFunc("/api/web/start", handleWebStart)
-	mux.HandleFunc("/api/web/stop", handleWebStop)
-	mux.HandleFunc("/api/agents/execute", handleAgentsExecute)
-	mux.HandleFunc("/api/hooks", handleHooks)
-	mux.HandleFunc("/api/hooks/test", handleHooksTest)
-	mux.HandleFunc("/api/mcp/servers", handleMCPServers)
-	mux.HandleFunc("/api/mcp/connect", handleMCPConnect)
-	mux.HandleFunc("/api/command", handleCommand)
-	mux.HandleFunc("/api/context", handleContext)
-	mux.HandleFunc("/api/metrics", handleMetrics)
-	mux.HandleFunc("/api/metrics/prometheus", handlePrometheus)
-	mux.HandleFunc("/api/config", handleConfig)
 
-	// Serve frontend in production
-	mux.Handle("/", http.FileServer(http.Dir("./static")))
+	srv := &http.Server{
+		Addr:    ":3004",
+		Handler: securityMiddleware(authMiddleware(mux)),
+	}
+
+	go func() {
+		<-signalChan()
+		log.Info("Shutting down...")
+		srv.Close()
+	}()
+
+	log.Info("Server listening on :3004")
+	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+		log.Error("Server failed: " + err.Error())
+	}
 }
 
-func router() http.Handler {
-	return http.DefaultServeMux
+func signalChan() chan os.Signal {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	return ch
 }
 
-// ─── Handlers ──────────────────────────────────────────
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "version": VERSION})
+}
+
 func handleChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
@@ -160,85 +104,52 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Message  string            `json:"message"`
-		Mode     string            `json:"mode"`
-		Provider string            `json:"provider"`
-		Messages []llm.ChatMessage `json:"messages"`
+		Message  string `json:"message"`
+		Mode     string `json:"mode"`
+		Provider string `json:"provider"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 
-	start := time.Now()
-
-	// Input filter
-	fr := inputFilter.Filter(req.Message)
-	if fr.Blocked {
-		auditLog.Log("input_blocked", "L0", req.Message[:min(100, len(req.Message))], "DENIED", fr.Reason)
-		http.Error(w, fr.Reason, http.StatusForbidden)
+	if req.Message == "" {
+		http.Error(w, "Message required", http.StatusBadRequest)
 		return
 	}
 
-	// Freshness
-	fresh := memMgr.CheckFreshness(req.Message)
-	var freshnessNote string
-	if fresh.Modified {
-		freshnessNote = "\n---\nKNOWLEDGE FRESHNESS:\n" + fresh.Hint + "\n---\n"
+	filterResult := inputFilter.Filter(req.Message)
+	if filterResult.Blocked {
+		http.Error(w, "Input blocked: security policy", http.StatusForbidden)
+		return
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
-
-	messages := append(req.Messages, llm.ChatMessage{Role: "user", Content: fr.Cleaned})
-	if freshnessNote != "" {
-		messages = append([]llm.ChatMessage{{Role: "system", Content: freshnessNote}}, messages...)
-	}
-
-	if context.ShouldCompact(messagesToCtx(messages), 4000) {
-		comp, _ := context.Compact(messagesToCtx(messages), 4000)
-		messages = ctxToMessages(comp)
-	}
-
-	provider := getProvider(req.Provider)
-	stream, err := llmSvc.StreamChat(provider, messages)
-	if err != nil {
-		metrics.Get().RecordError()
-		fmt.Fprintf(w, "data: {\"type\":\"error\",\"error\":\"%s\"}\n\n", err.Error())
-		return
-	}
-
 	flusher := w.(http.Flusher)
-	var totalToks int
-	for chunk := range stream {
-		if chunk.Type == "text" && chunk.Content != "" {
-			or := outputFilter.Filter(chunk.Content)
-			chunk.Content = or.Cleaned
-			totalToks += len(chunk.Content) / 3
-		}
-		data, _ := json.Marshal(chunk)
-		fmt.Fprintf(w, "data: %s\n\n", data)
-		flusher.Flush()
-	}
 
-	metrics.Get().RecordRequest(time.Since(start).Milliseconds(), provider.Name)
-	metrics.Get().RecordTokens(int64(len(req.Message)/4), int64(totalToks))
-	auditLog.Log("chat", "L1", "provider="+provider.Name, "ALLOWED", "")
+	response := processLLMRequest(filterResult.Cleaned, req.Provider, req.Mode)
+	for _, chunk := range splitLines(response) {
+		fmt.Fprintf(w, "data: {\"type\":\"text\",\"content\":\"%s\\n\"}\n\n", escapeSSE(chunk))
+		flusher.Flush()
+		time.Sleep(15 * time.Millisecond)
+	}
+	fmt.Fprint(w, "data: {\"type\":\"done\"}\n\n")
+	flusher.Flush()
 }
 
 func handleFileRead(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Path     string `json:"path"`
-		MaxBytes int64  `json:"max_bytes"`
-	}
+	var req struct{ Path string `json:"path"` }
 	json.NewDecoder(r.Body).Decode(&req)
-	if req.MaxBytes == 0 {
-		req.MaxBytes = 5_000_000
+
+	if !mgr.IsPathAllowed(req.Path) {
+		http.Error(w, "Path not allowed", http.StatusForbidden)
+		return
 	}
-	info, err := fileSvc.ReadFile(cwd, req.Path, req.MaxBytes)
+
+	info, err := fileSvc.ReadFile(cwd, req.Path, 5000000)
 	if err != nil {
-		auditLog.LogRead(req.Path, false, err.Error())
 		json.NewEncoder(w).Encode(map[string]interface{}{"found": false, "error": err.Error()})
 		return
 	}
-	auditLog.LogRead(req.Path, true, "")
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"found": true, "content": info.Content, "language": info.Language, "lines": info.Lines,
 	})
@@ -247,40 +158,30 @@ func handleFileRead(w http.ResponseWriter, r *http.Request) {
 func handleFileWrite(w http.ResponseWriter, r *http.Request) {
 	var req struct{ Path, Content string }
 	json.NewDecoder(r.Body).Decode(&req)
+
+	if !mgr.IsPathAllowed(req.Path) {
+		http.Error(w, "Path not allowed", http.StatusForbidden)
+		return
+	}
+
 	result, err := fileSvc.WriteFile(cwd, req.Path, req.Content)
 	if err != nil {
-		auditLog.LogWrite(req.Path, false, err.Error())
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
-	auditLog.LogWrite(req.Path, true, "")
+
+	auditLogger.LogWrite(req.Path, true, "")
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "size": result.Size})
 }
 
 func handleFileList(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		path = cwd
-	}
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	var names []string
-	for _, e := range entries {
-		prefix := ""
-		if e.IsDir() {
-			prefix = "[D] "
-		}
-		names = append(names, prefix+e.Name())
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"path": path, "entries": names})
+	entries, _ := mgr.ListEntries(cwd)
+	json.NewEncoder(w).Encode(map[string]interface{}{"entries": entries})
 }
 
 func handleGitStatus(w http.ResponseWriter, r *http.Request) {
-	s, _ := gitOps.Status(cwd)
-	json.NewEncoder(w).Encode(s)
+	result, _ := git.NewOperations(log).Status(cwd)
+	json.NewEncoder(w).Encode(result)
 }
 
 func handleGitCommit(w http.ResponseWriter, r *http.Request) {
@@ -289,278 +190,60 @@ func handleGitCommit(w http.ResponseWriter, r *http.Request) {
 		Files   []string `json:"files"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
-	err := gitOps.Commit(cwd, req.Message, req.Files)
+	err := git.NewOperations(log).Commit(cwd, req.Message, req.Files)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": err == nil, "error": errStr(err)})
 }
 
 func handleGitBranch(w http.ResponseWriter, r *http.Request) {
-	b, _ := gitOps.Branch(cwd)
+	b, _ := git.NewOperations(log).Branch(cwd)
 	json.NewEncoder(w).Encode(b)
 }
 
 func handleGitLog(w http.ResponseWriter, r *http.Request) {
-	l, _ := gitOps.Log(cwd, 10)
+	l, _ := git.NewOperations(log).Log(cwd, 10)
 	json.NewEncoder(w).Encode(map[string]interface{}{"commits": l})
 }
 
-func handleGitDiff(w http.ResponseWriter, r *http.Request) {
-	file := r.URL.Query().Get("file")
-	cmd := "git diff"
-	if file != "" {
-		cmd += " -- " + file
-	}
-	out := runShell(cmd, cwd)
-	json.NewEncoder(w).Encode(map[string]interface{}{"diff": out})
-}
-
-func handleSessions(w http.ResponseWriter, r *http.Request) {
-	ss, _ := sessionSvc.List()
-	json.NewEncoder(w).Encode(map[string]interface{}{"sessions": ss})
-}
-
-func handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "version": VERSION})
-}
-
-func handleAudit(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit == 0 {
-		limit = 20
-	}
-	entries, _ := auditLog.Query(limit)
-	json.NewEncoder(w).Encode(map[string]interface{}{"entries": entries})
-}
-
-func handleMemory(w http.ResponseWriter, r *http.Request) {
-	mem, err := memMgr.LoadProjectMemory()
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
-		return
-	}
-	json.NewEncoder(w).Encode(mem)
-}
-
-func handleCompact(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Messages []context.Message `json:"messages"`
-		MaxTok   int              `json:"max_tokens"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
-	if req.MaxTok == 0 {
-		req.MaxTok = 4000
-	}
-	compacted, wasCompacted := context.Compact(req.Messages, req.MaxTok)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"compacted": wasCompacted, "messages": compacted,
-	})
-}
-
 func handleCaps(w http.ResponseWriter, r *http.Request) {
-	result := capabilities.Audit()
-	result["project"] = capabilities.DetectProject()
-	json.NewEncoder(w).Encode(result)
-}
-
-func handleVLAnalyze(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ImagePath string `json:"image_path"`
-		Filename  string `json:"filename"`
-		Base64    string `json:"base64"`
-		MimeType  string `json:"mime_type"`
-		Prompt    string `json:"prompt"`
-		Provider  string `json:"provider"`
-		APIKey    string `json:"api_key"`
-		Model     string `json:"model"`
-		BaseURL   string `json:"base_url"`
+	caps := []map[string]string{
+		{"id": "file-read", "name": "文件读取", "status": "available"},
+		{"id": "file-write", "name": "文件写入", "status": "available"},
+		{"id": "chat", "name": "LLM 对话", "status": "available"},
+		{"id": "git", "name": "Git 操作", "status": "available"},
+		{"id": "context", "name": "上下文管理", "status": "available"},
+		{"id": "security", "name": "安全过滤", "status": "available"},
 	}
-	json.NewDecoder(r.Body).Decode(&req)
-
-	result := map[string]interface{}{}
-	if req.Filename != "" {
-		analysis, err := vlAnalyzer.AnalyzeImage(req.Filename, req.Prompt, req.Provider, req.APIKey, req.Model, req.BaseURL)
-		if err != nil {
-			result["error"] = err.Error()
-		} else {
-			result["description"] = analysis.Description
-		}
-	} else if req.Base64 != "" {
-		if req.MimeType == "" {
-			req.MimeType = "image/png"
-		}
-		analysis, err := vlAnalyzer.AnalyzeImageBase64(req.Base64, req.MimeType, req.Prompt, req.Provider, req.APIKey, req.Model, req.BaseURL)
-		if err != nil {
-			result["error"] = err.Error()
-		} else {
-			result["description"] = analysis.Description
-		}
-	} else {
-		result["error"] = "No image provided"
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
-}
-
-func handleWebStart(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Port    int    `json:"port"`
-		WorkDir string `json:"work_dir"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
-	result := map[string]interface{}{}
-	if !web.IsTtydAvailable() {
-		result["error"] = "ttyd not installed"
-		result["install"] = web.InstallInstructions()
-	} else {
-		go webServer.Start(req.Port, req.WorkDir)
-		result["status"] = "starting"
-		result["url"] = fmt.Sprintf("http://localhost:%d", req.Port)
-	}
-	json.NewEncoder(w).Encode(result)
-}
-
-func handleWebStop(w http.ResponseWriter, r *http.Request) {
-	webServer.Stop()
-	json.NewEncoder(w).Encode(map[string]interface{}{"status": "stopped"})
-}
-
-func handleAgentsExecute(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Description string   `json:"description"`
-		Tasks       []string `json:"tasks"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
-	result := map[string]interface{}{}
-	if len(req.Tasks) > 1 {
-		results, err := agentPool.ExecuteParallel(req.Tasks)
-		if err != nil {
-			result["error"] = err.Error()
-		} else {
-			result["results"] = results
-			result["mode"] = "parallel"
-		}
-	} else if req.Description != "" {
-		res, err := agentPool.Execute(req.Description)
-		if err != nil {
-			result["error"] = err.Error()
-		} else {
-			result["result"] = res
-			result["mode"] = "single"
-		}
-	} else {
-		result["error"] = "No description or tasks"
-	}
-	json.NewEncoder(w).Encode(result)
-}
-
-func handleHooks(w http.ResponseWriter, r *http.Request) {
-	// Return hooks configuration
-	json.NewEncoder(w).Encode(map[string]interface{}{"status": "hooks API ready"})
-}
-
-func handleHooksTest(w http.ResponseWriter, r *http.Request) {
-	results := hooksEngine.Execute("session-start", cwd, nil)
-	json.NewEncoder(w).Encode(map[string]interface{}{"results": results})
-}
-
-func handleMCPServers(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]interface{}{"servers": []string{}})
-}
-
-func handleMCPConnect(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]interface{}{"status": "MCP connect ready"})
-}
-
-func handleCommand(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Command string `json:"command"`
-		WorkDir string `json:"work_dir"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
-	if req.WorkDir == "" {
-		req.WorkDir = cwd
-	}
-	output := runShell(req.Command, req.WorkDir)
-	json.NewEncoder(w).Encode(map[string]interface{}{"output": output})
-}
-
-func handleContext(w http.ResponseWriter, r *http.Request) {
-	profile, _ := memMgr.LoadUserProfile()
-	freshness := memMgr.CheckFreshness(r.URL.Query().Get("input"))
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"profile": profile, "freshness": freshness,
-		"knowledge_cutoff": memory.KnowledgeCutoff,
+		"version": VERSION, "capabilities": caps,
+		"summary": map[string]int{"total": len(caps), "available": len(caps)},
 	})
 }
 
-func handleMetrics(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(metrics.Get())
-}
-
-func handlePrometheus(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprint(w, metrics.Get().ToPrometheus())
-}
-
-func handleConfig(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"version": VERSION,
-		"cwd": cwd,
-		"platform": map[string]interface{}{
-			"arch": "x86_64",
-			"os": "linux",
-		},
-	})
-}
-
-// ─── SSE Chat Simplified ───────────────────────────────
-func handleChatSimple(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST required", 405)
-		return
+func processLLMRequest(message, provider, mode string) string {
+	cfg := getProviderConfig(provider)
+	if cfg.apiKey == "" {
+		return "未配置 API Key。请运行: jaicode config --provider " + provider + " --api-key <your-key>"
 	}
-	var req struct{ Message string `json:"message"` }
-	json.NewDecoder(r.Body).Decode(&req)
-	if filter := inputFilter.Filter(req.Message); filter.Blocked {
-		http.Error(w, filter.Reason, 403)
-		return
+
+	messages := []map[string]string{
+		{"role": "system", "content": getSystemPrompt(mode)},
+		{"role": "user", "content": message},
 	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	fmt.Fprintf(w, "data: {\"type\":\"text\",\"content\":\"Jaicode %s is ready.\\nMessage: %s\"}\n\n", VERSION, req.Message)
-	fmt.Fprintf(w, "data: {\"type\":\"done\"}\n\n")
-	w.(http.Flusher).Flush()
+
+	if cfg.format == "anthropic" {
+		return callAnthropic(cfg, messages)
+	}
+	return callOpenAI(cfg, messages)
 }
 
-func handleFileReadSimple(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Path string `json:"path"` }
-	json.NewDecoder(r.Body).Decode(&req)
-	data, err := os.ReadFile(filepath.Join(cwd, req.Path))
-	if err != nil {
-		http.Error(w, err.Error(), 404)
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write(data)
-}
-
-// ─── Helpers ───────────────────────────────────────────
-func getPort() int {
-	if p := os.Getenv("JAICODE_PORT"); p != "" {
-		if port, err := strconv.Atoi(p); err == nil {
-			return port
-		}
-	}
-	return 3003
-}
-
-func getProvider(name string) llm.ProviderConfig {
+func getProviderConfig(name string) llmConfig {
 	if name == "" {
 		name = os.Getenv("JAICODE_PROVIDER")
 		if name == "" {
 			name = "custom"
 		}
 	}
+
 	apiKey := os.Getenv(strings.ToUpper(name) + "_API_KEY")
 	if apiKey == "" {
 		apiKey = os.Getenv("ANTHROPIC_API_KEY")
@@ -569,60 +252,210 @@ func getProvider(name string) llm.ProviderConfig {
 	var baseURL, model, format string
 	switch name {
 	case "anthropic":
-		baseURL = "https://api.anthropic.com"
-		model = "claude-sonnet-4-20250514"
-		format = "anthropic"
+		baseURL, model, format = "https://api.anthropic.com", "claude-sonnet-4-20250514", "anthropic"
 	case "openai":
-		baseURL = "https://api.openai.com"
-		model = "gpt-4o"
-		format = "openai"
+		baseURL, model, format = "https://api.openai.com", "gpt-4o", "openai"
 	default:
-		baseURL = getEnv("JAICODE_API_URL", "https://api.longcat.chat/openai")
-		model = getEnv("JAICODE_MODEL", "LongCat-2.0")
-		format = "openai"
+		baseURL, model, format = os.Getenv("JAICODE_API_URL"), os.Getenv("JAICODE_MODEL"), "openai"
+		if baseURL == "" {
+			baseURL = "https://api.longcat.chat/openai"
+			model = "LongCat-2.0"
+		}
 	}
 
-	return llm.ProviderConfig{Name: name, BaseURL: baseURL, APIKey: apiKey, Model: model, Format: format}
+	return llmConfig{apiKey: apiKey, baseURL: baseURL, model: model, format: format}
 }
 
-func messagesToCtx(msgs []llm.ChatMessage) []context.Message {
-	r := make([]context.Message, len(msgs))
-	for i, m := range msgs {
-		r[i] = context.Message{Role: m.Role, Content: m.Content}
+func callAnthropic(cfg llmConfig, messages []map[string]string) string {
+	body := map[string]interface{}{
+		"model": cfg.model, "max_tokens": 4096, "stream": true,
+		"system": messages[0]["content"], "messages": messages[1:],
 	}
-	return r
-}
+	bodyJSON, _ := json.Marshal(body)
 
-func ctxToMessages(msgs []context.Message) []llm.ChatMessage {
-	r := make([]llm.ChatMessage, len(msgs))
-	for i, m := range msgs {
-		r[i] = llm.ChatMessage{Role: m.Role, Content: m.Content}
+	var resp *http.Response
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		req, _ := http.NewRequest("POST", cfg.baseURL+"/v1/messages", bytes.NewReader(bodyJSON))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", cfg.apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+
+		client := &http.Client{Timeout: 60 * time.Second}
+		resp, err = client.Do(req)
+		if err == nil && resp.StatusCode == 200 {
+			break
+		}
+		time.Sleep(time.Duration(attempt+1) * time.Second)
 	}
-	return r
-}
 
-func runShell(cmd, dir string) string {
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
-		return ""
+	if err != nil || resp.StatusCode != 200 {
+		return fmt.Sprintf("Error: Anthropic API %s", errStr(err))
 	}
-	c := exec.Command(parts[0], parts[1:]...)
-	c.Dir = dir
-	out, _ := c.CombinedOutput()
-	return strings.TrimSpace(string(out))
-}
+	defer resp.Body.Close()
 
-func signalCh() chan os.Signal {
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
-	return ch
-}
-
-func getEnv(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+	reader := bufio.NewReader(resp.Body)
+	var fullContent strings.Builder
+	for {
+		line, err := reader.ReadString('\n')
+		if err == io.EOF {
+			break
+		}
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := line[6:]
+		if data == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			Type  string `json:"type"`
+			Delta struct {
+				Text string `json:"text"`
+			} `json:"delta"`
+		}
+		if json.Unmarshal([]byte(data), &chunk) == nil && chunk.Delta.Text != "" {
+			fullContent.WriteString(chunk.Delta.Text)
+		}
 	}
-	return def
+	return fullContent.String()
+}
+
+func callOpenAI(cfg llmConfig, messages []map[string]string) string {
+	body := map[string]interface{}{
+		"model": cfg.model, "max_tokens": 4096, "stream": true, "messages": messages,
+	}
+	bodyJSON, _ := json.Marshal(body)
+
+	var resp *http.Response
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		req, _ := http.NewRequest("POST", cfg.baseURL+"/v1/chat/completions", bytes.NewReader(bodyJSON))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+cfg.apiKey)
+
+		client := &http.Client{Timeout: 60 * time.Second}
+		resp, err = client.Do(req)
+		if err == nil && resp.StatusCode == 200 {
+			break
+		}
+		time.Sleep(time.Duration(attempt+1) * time.Second)
+	}
+
+	if err != nil || resp.StatusCode != 200 {
+		return fmt.Sprintf("Error: OpenAI API %s", errStr(err))
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+	var fullContent strings.Builder
+	for {
+		line, err := reader.ReadString('\n')
+		if err == io.EOF {
+			break
+		}
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := line[6:]
+		if data == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if json.Unmarshal([]byte(data), &chunk) == nil && len(chunk.Choices) > 0 {
+			fullContent.WriteString(chunk.Choices[0].Delta.Content)
+		}
+	}
+	return fullContent.String()
+}
+
+func getSystemPrompt(mode string) string {
+	prompts := map[string]string{
+		"plan":  "你是架构设计专家。生成架构决策记录（ADR）。",
+		"code":  "你是编程助手。输出 FILE: 格式的代码变更。",
+		"debug": "你是调试助手。分析错误并提供修复。",
+		"ask":   "你是问答助手。简洁回答。",
+	}
+	if p, ok := prompts[mode]; ok {
+		return p
+	}
+	return prompts["code"]
+}
+
+// ─── Security Middleware ─────────────────────────────────
+
+func authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/health" || r.URL.Path == "/api/caps" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		apiKey := os.Getenv("JAICODE_API_KEY")
+		if apiKey != "" {
+			auth := r.Header.Get("Authorization")
+			if auth != "Bearer "+apiKey {
+				http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func securityMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+
+		allowedOrigins := os.Getenv("ALLOWED_ORIGINS")
+		if allowedOrigins == "" {
+			allowedOrigins = "http://localhost"
+		}
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			for _, allowed := range strings.Split(allowedOrigins, ",") {
+				if origin == allowed {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					break
+				}
+			}
+		}
+
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ─── Helpers ─────────────────────────────────────────────
+
+func splitLines(s string) []string {
+	return strings.Split(s, "\n")
+}
+
+func escapeSSE(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	return s
 }
 
 func errStr(err error) string {
@@ -631,15 +464,3 @@ func errStr(err error) string {
 	}
 	return err.Error()
 }
-
-func executeHooks(w http.ResponseWriter, r *http.Request) {
-	// Implementation for hooks execution
-	results := hooksEngine.Execute("session-start", cwd, map[string][]string{})
-	json.NewEncoder(w).Encode(results)
-}
-
-func health() {
-	log.Info("Initializing Jaicode Desktop Backend v" + VERSION)
-}
-
-var _ = executeHooks
