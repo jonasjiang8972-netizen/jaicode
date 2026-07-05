@@ -10,7 +10,7 @@ export class AskHandler implements AgentModeHandler {
   }
 
   getSystemPrompt(ctx: AgentContext): string {
-    const lang = (ctx.userProfile?.outputPreferences as any)?.language || "zh"
+    const lang = ctx.userProfile?.outputPreferences?.language || "zh"
     if (lang === "zh") {
       return `你是一个编程助手。用户会向你提问，请用中文回答。回答要简洁、准确、有帮助。
 你可以阅读当前项目的文件来更好地回答问题，但不能修改任何文件。`

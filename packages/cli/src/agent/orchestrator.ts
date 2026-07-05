@@ -52,7 +52,7 @@ export class AgentOrchestrator {
     return this.provider
   }
 
-  getHandler(mode: AgentMode): any {
+  getHandler(mode: AgentMode): AgentModeHandler | undefined {
     return this.handlers.get(mode)
   }
 

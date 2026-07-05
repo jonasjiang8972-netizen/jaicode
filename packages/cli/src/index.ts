@@ -1,4 +1,4 @@
-const VERSION = "0.1.0"
+const VERSION = "0.13.1"
 
 interface ParsedArgs {
   command: string
@@ -254,7 +254,7 @@ function t(key: string, lang: "zh" | "en", vars?: Record<string, string>): strin
   return msg
 }
 
-async function handleConfig(args: ParsedArgs, config: any, lang: "zh" | "en"): Promise<void> {
+async function handleConfig(args: ParsedArgs, config: typeof import("./config").AppConfig, lang: "zh" | "en"): Promise<void> {
   const provider = getFlag(args, "provider") as string | undefined
   const apiKey = getFlag(args, "api-key") as string | undefined
   const model = getFlag(args, "model") as string | undefined
@@ -409,7 +409,7 @@ async function handleInit(lang: "zh" | "en"): Promise<void> {
   console.log(lang === "zh" ? `已初始化项目配置：${configDir}/project.yaml` : `Project config created: ${configDir}/project.yaml`)
 }
 
-async function createProviderFromConfig(config: any): Promise<any | null> {
+async function createProviderFromConfig(config: { providers?: Record<string, ProviderConfig> }): Promise<{ name: string; model: string; stream: (msgs: LLMMessage[]) => AsyncGenerator<StreamChunk> } | null> {
   const name = config.defaultProvider
   const cfg = config.providers?.[name]
   if (!cfg?.apiKey) return null
@@ -537,8 +537,8 @@ async function main(): Promise<void> {
       console.log(lang === "zh" ? "\n✅ 修复已验证，运行最终确认..." : "\n✅ Fix verified, running final checks...")
 
       // Try to run the project's verify command if defined
-      if (projectConfig && (projectConfig as any).verifyCommand) {
-        const verifyCmd = (projectConfig as any).verifyCommand as string
+      if (projectConfig && "verifyCommand" in projectConfig && (projectConfig as Record<string, unknown>).verifyCommand) {
+        const verifyCmd = String((projectConfig as Record<string, unknown>).verifyCommand)
         const proc = Bun.spawn(verifyCmd.split(" "), { cwd: process.cwd(), stdout: "inherit", stderr: "inherit" })
         await proc.exited
       }

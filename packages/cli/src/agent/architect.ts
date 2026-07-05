@@ -10,7 +10,7 @@ export class ArchitectHandler implements AgentModeHandler {
   }
 
   getSystemPrompt(ctx: AgentContext): string {
-    const lang = (ctx.userProfile?.outputPreferences as any)?.language || "zh"
+    const lang = ctx.userProfile?.outputPreferences?.language || "zh"
     if (lang === "zh") {
       return `你是一个架构设计助手。用户描述需求，你需要生成架构决策记录（ADR）。
 
@@ -66,7 +66,7 @@ Save the ADR as ADR.md in the project directory.`
   }
 
   async execute(ctx: AgentContext, task: string): Promise<AgentResult> {
-    const lang = (ctx.userProfile?.outputPreferences as any)?.language || "zh"
+    const lang = ctx.userProfile?.outputPreferences?.language || "zh"
     const structure = await ContextBuilder.readProjectStructure(ctx.cwd, 3)
 
     const messages: LLMMessage[] = [

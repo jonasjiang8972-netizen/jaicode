@@ -1,4 +1,4 @@
-import { ILLMProvider, LLMMessage, LLMResponse, StreamChunk } from "./interface"
+import { ILLMProvider, LLMMessage, LLMResponse, StreamChunk, LLMTool } from "./interface"
 
 export class OpenAIProvider implements ILLMProvider {
   readonly name = "openai"

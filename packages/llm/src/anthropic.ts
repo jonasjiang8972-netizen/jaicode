@@ -1,4 +1,4 @@
-import { ILLMProvider, LLMMessage, LLMResponse, StreamChunk } from "./interface"
+import { ILLMProvider, LLMMessage, LLMResponse, StreamChunk, LLMTool } from "./interface"
 
 export class AnthropicProvider implements ILLMProvider {
   readonly name = "anthropic"
@@ -12,7 +12,7 @@ export class AnthropicProvider implements ILLMProvider {
     this.baseURL = config.baseURL || "https://api.anthropic.com/v1"
   }
 
-  async chat(messages: LLMMessage[], tools?: any[]): Promise<LLMResponse> {
+  async chat(messages: LLMMessage[], tools?: LLMTool[]): Promise<LLMResponse> {
     const body: Record<string, unknown> = {
       model: this.model,
       max_tokens: 4096,
@@ -57,7 +57,7 @@ export class AnthropicProvider implements ILLMProvider {
     }
   }
 
-  async *stream(messages: LLMMessage[], tools?: any[]): AsyncGenerator<StreamChunk> {
+  async *stream(messages: LLMMessage[], tools?: LLMTool[]): AsyncGenerator<StreamChunk> {
     const body: Record<string, unknown> = {
       model: this.model,
       max_tokens: 4096,

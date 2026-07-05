@@ -8,7 +8,14 @@ import http from 'node:http'
 import { metrics } from '../tui-node/src/observability/metrics.js'
 
 const PORT = process.env.JAICODE_PORT || 3002
-const API_KEY = process.env.JAICODE_API_KEY || 'jaicode-dev-key'
+const API_KEY = process.env.JAICODE_API_KEY
+
+if (!API_KEY) {
+  console.error('[FATAL] JAICODE_API_KEY environment variable is required')
+  process.exit(1)
+}
+
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost').split(',')
 
 // ─── Rate Limiter ──────────────────────────────────────
 const rateLimits = new Map()
@@ -118,7 +125,10 @@ const routes = {
 export function startServer(port = PORT) {
   const server = http.createServer((req, res) => {
     // CORS
-    res.setHeader('Access-Control-Allow-Origin', '*')
+    const origin = req.headers.origin
+    if (ALLOWED_ORIGINS.includes(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin)
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
 
