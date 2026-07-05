@@ -8,14 +8,11 @@ import path from 'node:path'
 import { info, error, debug } from '../logging/logger.js'
 
 // ─── Agent Task ────────────────────────────────────────
-interface AgentTask {
-  id: string
-  description: string
-  files?: string[]
-  cwd?: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
-  result?: string
-  error?: string
+const AgentStatus = {
+  PENDING: 'pending',
+  RUNNING: 'running',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
 }
 
 // ─── Agent Pool ────────────────────────────────────────
@@ -149,9 +146,7 @@ export async function runSubAgent(description, cwd, providerConfig) {
   }
 }
 
-// ─── Multi-Agent Task Decomposition ────────────────────
 export function decomposeTask(goal, maxTasks = 4) {
-  // Simple decomposition - in production, use LLM to decompose
   const tasks = []
 
   if (goal.files && goal.files.length > 0) {
@@ -160,19 +155,18 @@ export function decomposeTask(goal, maxTasks = 4) {
         id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         description: `${goal.action}: ${file}`,
         files: [file],
-        status: 'pending',
+        status: AgentStatus.PENDING,
       })
     }
   } else {
     tasks.push({
       id: `task-${Date.now()}`,
       description: goal.action,
-      status: 'pending',
+      status: AgentStatus.PENDING,
     })
   }
 
   return tasks
 }
 
-export { AgentPool }
-export type { AgentTask }
+export { AgentPool, AgentStatus }
