@@ -48,7 +48,7 @@ Output format: Analyze the error, provide fixes (FILE: format same as code mode)
   }
 
   async execute(ctx: AgentContext, task: string): Promise<AgentResult> {
-    const lang = (ctx.userProfile?.outputPreferences as any)?.language || "zh"
+    const lang = ctx.userProfile?.outputPreferences?.language || "zh"
 
     // Safety check
     if (this.isDangerous(task)) {

@@ -6,7 +6,7 @@ import { execSync, spawn } from 'child_process'
 import path from 'path'
 
 let jaicodeTerminal: vscode.Terminal | undefined
-let apiProcess: any = null
+let apiProcess: import('node:child_process').ChildProcess | null = null
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Jaicode extension activated')

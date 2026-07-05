@@ -537,8 +537,8 @@ async function main(): Promise<void> {
       console.log(lang === "zh" ? "\n✅ 修复已验证，运行最终确认..." : "\n✅ Fix verified, running final checks...")
 
       // Try to run the project's verify command if defined
-      if (projectConfig && (projectConfig as any).verifyCommand) {
-        const verifyCmd = (projectConfig as any).verifyCommand as string
+      if (projectConfig && "verifyCommand" in projectConfig && (projectConfig as Record<string, unknown>).verifyCommand) {
+        const verifyCmd = String((projectConfig as Record<string, unknown>).verifyCommand)
         const proc = Bun.spawn(verifyCmd.split(" "), { cwd: process.cwd(), stdout: "inherit", stderr: "inherit" })
         await proc.exited
       }

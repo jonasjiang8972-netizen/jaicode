@@ -50,7 +50,7 @@ Maximum 20 files per task.${projectCtx}`
   async execute(ctx: AgentContext, task: string): Promise<AgentResult> {
     // Read project context
     const structure = await ContextBuilder.readProjectStructure(ctx.cwd, 2)
-    const userLang = (ctx.userProfile?.outputPreferences as any)?.language || "zh"
+    const userLang = ctx.userProfile?.outputPreferences?.language || "zh"
     const contextInfo =
       userLang === "zh"
         ? `\n\n当前项目结构:\n${structure}`
