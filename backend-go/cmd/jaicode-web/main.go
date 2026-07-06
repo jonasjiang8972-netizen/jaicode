@@ -2,22 +2,23 @@
 package main
 
 import (
-	"embed"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jonasjiang8972-netizen/jaicode-go/internal/auth"
 	"github.com/jonasjiang8972-netizen/jaicode-go/internal/upload"
 )
 
-const VERSION = "0.20.0"
+const VERSION = "0.17.0"
 
 var webDist embed.FS
 
@@ -30,11 +31,97 @@ func main() {
 	sessionManager := auth.NewSessionManager(os.Getenv("JAICODE_DOMAIN"), os.Getenv("JAICODE_HTTPS") == "true")
 	uploadHandler := upload.NewHandler(os.Getenv("JAICODE_UPLOAD_DIR"), 2)
 
-	// Cleanup old uploads periodically
+	// Context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Cleanup old uploads periodically (with exit on ctx.Done)
 	go func() {
 		ticker := time.NewTicker(time.Hour)
-		for range ticker.C {
-			uploadHandler.Cleanup(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				uploadHandler.Cleanup(24 * time.Hour)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	mux := http.NewServeMux()
+
+	// Static files (SPA)
+	webHandler := newWebHandler()
+	mux.Handle("/", webHandler)
+
+	// Auth endpoints (public)
+	mux.HandleFunc("/api/health", handleHealth)
+	mux.HandleFunc("/api/auth/login", handleLogin(sessionManager))
+	mux.HandleFunc("/api/auth/logout", handleLogout(sessionManager))
+
+	// API endpoints (authenticated via middleware)
+	apiMux := http.NewServeMux()
+	apiMux.HandleFunc("/api/chat", handleChat(sessionManager, uploadHandler))
+	apiMux.HandleFunc("/api/upload", handleUpload(uploadHandler))
+	apiMux.HandleFunc("/api/sessions", handleSessions)
+	apiMux.HandleFunc("/api/cache/stats", handleCacheStats)
+
+	// Wrap API with auth + security middleware
+	authAPI := sessionManager.Middleware(securityMiddleware(apiMux))
+	mux.Handle("/api/", authAPI)
+
+	addr := ":" + port
+	log.Printf("Jaicode Web v%s starting on http://localhost%s", VERSION, port)
+
+	// Graceful shutdown on SIGINT/SIGTERM
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	server := &http.Server{
+		Addr:         addr,
+		Handler:      mux,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 5 * time.Minute,
+		IdleTimeout:  120 * time.Second,
+	}
+
+	// Start server in goroutine
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+
+	// Wait for shutdown signal
+	<-sigCh
+	log.Info("Shutdown signal received, draining connections...")
+	cancel() // Stop background goroutines
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	server.Shutdown(shutdownCtx)
+	log.Info("Jaicode Web shutdown complete")
+}
+
+	sessionManager := auth.NewSessionManager(os.Getenv("JAICODE_DOMAIN"), os.Getenv("JAICODE_HTTPS") == "true")
+	uploadHandler := upload.NewHandler(os.Getenv("JAICODE_UPLOAD_DIR"), 2)
+
+	// Context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Cleanup old uploads periodically (with exit on ctx.Done)
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				uploadHandler.Cleanup(24 * time.Hour)
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
@@ -63,6 +150,10 @@ func main() {
 	addr := ":" + port
 	log.Printf("Jaicode Web v%s starting on http://localhost%s", VERSION, port)
 
+	// Graceful shutdown on SIGINT/SIGTERM
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      mux,
@@ -70,6 +161,23 @@ func main() {
 		WriteTimeout: 5 * time.Minute,
 		IdleTimeout:  120 * time.Second,
 	}
+
+	// Start server in goroutine
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+
+	// Wait for shutdown signal
+	<-sigCh
+	log.Info("Shutdown signal received, draining connections...")
+	cancel() // Stop background goroutines
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	server.Shutdown(shutdownCtx)
+	log.Info("Jaicode Web shutdown complete")
 
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
@@ -107,14 +215,36 @@ func (h *webHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	stat, _ := file.Stat()
+	stat, err := file.Stat()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
 	if stat.IsDir() {
-		file, _ = h.fs.Open("index.html")
+		file, err = h.fs.Open("index.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
 		defer file.Close()
+		stat, _ = file.Stat()
 	}
 
 	w.Header().Set("Content-Type", mimeType(upath))
-	http.ServeContent(w, r, upath, stat.ModTime(), file.(io.ReadSeeker))
+	
+	// Safe type assertion with ok pattern
+	if seeker, ok := file.(io.ReadSeeker); ok {
+		http.ServeContent(w, r, upath, stat.ModTime(), seeker)
+	} else {
+		// Fallback: read all and serve
+		data, err := io.ReadAll(file)
+		if err != nil {
+			http.Error(w, "Internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Write(data)
+	}
 }
 
 func mimeType(path string) string {
@@ -200,7 +330,10 @@ func handleLogin(sm *auth.SessionManager) http.HandlerFunc {
 			req.Model = defaultModel(req.Provider)
 		}
 
-		sessionID := sm.CreateSession(req.APIKey, req.Provider, req.Model)
+		// Create session with initial ID
+		initialID := sm.CreateSession(req.APIKey, req.Provider, req.Model)
+		// Rotate session ID to prevent session fixation attacks
+		sessionID := sm.RotateSessionID(initialID)
 		sm.SetSessionCookie(w, sessionID)
 
 		w.Header().Set("Content-Type", "application/json")

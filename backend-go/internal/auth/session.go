@@ -109,6 +109,28 @@ func (sm *SessionManager) SetSessionCookie(w http.ResponseWriter, sessionID stri
 	})
 }
 
+// RotateSessionID prevents session fixation attacks by generating a new ID on privilege level change
+func (sm *SessionManager) RotateSessionID(oldID string) string {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	session, ok := sm.sessions[oldID]
+	if !ok {
+		return oldID
+	}
+
+	// Delete old session
+	delete(sm.sessions, oldID)
+
+	// Create new session ID
+	newID := generateSessionID()
+	session.ID = newID
+	session.LastAccess = time.Now()
+	sm.sessions[newID] = session
+
+	return newID
+}
+
 func (sm *SessionManager) ClearSessionCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "jaicode_session",
@@ -125,12 +147,16 @@ func (sm *SessionManager) ClearSessionCookie(w http.ResponseWriter) {
 func isPublicPath(path string) bool {
 	publicPaths := []string{
 		"/api/health", "/api/auth/login", "/api/auth/logout",
-		"/", "/index.html", "/login",
+		"/index.html", "/login",
 	}
 	for _, p := range publicPaths {
-		if path == p || path[:len(p)] == p {
+		if path == p || (len(path) >= len(p) && path[:len(p)] == p) {
 			return true
 		}
+	}
+	// Root path
+	if path == "/" {
+		return true
 	}
 	// Static files
 	if len(path) > 4 && path[len(path)-4:] == ".js" {
