@@ -22,7 +22,7 @@ import (
 	security "github.com/jonasjiang8972-netizen/jaicode-go/pkg/security"
 )
 
-const VERSION = "0.15.0"
+const VERSION = "0.16.0"
 
 var (
 	cwd, _      = os.Getwd()

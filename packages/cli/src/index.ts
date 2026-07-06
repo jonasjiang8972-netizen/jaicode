@@ -1,4 +1,4 @@
-const VERSION = "0.13.1"
+const VERSION = "0.16.0"
 
 interface ParsedArgs {
   command: string

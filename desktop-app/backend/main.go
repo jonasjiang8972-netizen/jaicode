@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const VERSION = "1.0.0"
+const VERSION = "0.16.0"
 
 var cwd string
 
