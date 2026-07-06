@@ -38,7 +38,7 @@ export function scanProject(cwd, maxDepth = 3) {
         walk(fullPath, depth + 1)
       } else {
         let size = 0
-        try { size = fs.statSync(fullPath).size } catch {}
+        try { size = fs.statSync(fullPath).size } catch (e) { return { error: 'File not accessible' } }
         result.files.push({ path: relPath, type: 'file', size })
         result.totalSize += size
       }

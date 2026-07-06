@@ -68,10 +68,10 @@ function readClipboardMacOSNative() {
     }
 
     // Clean up
-    try { fs.unlinkSync(tmpPath) } catch {}
+    try { fs.unlinkSync(tmpPath) } catch (e) { /* temp file may not exist */ }
     return null
-  } catch {
-    try { fs.unlinkSync(tmpPath) } catch {}
+  } catch (e) {
+    try { fs.unlinkSync(tmpPath) } catch (e) { /* cleanup */ }
     return null
   }
 }

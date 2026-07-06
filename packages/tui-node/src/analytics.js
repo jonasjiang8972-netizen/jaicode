@@ -156,7 +156,7 @@ export class Analytics {
 
   _save() {
     if (!this._dirty) return
-    try { fs.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2)) } catch {}
+    try { fs.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2)) } catch (e) { console.error('[WARN] Failed to save analytics:', e.message) }
     this._dirty = false
   }
 }

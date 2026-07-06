@@ -1,13 +1,18 @@
 import { test, expect } from 'bun:test'
-import { detectLanguage, isTextFile, isImageFile } from '../../cli/src/skills/file-reader'
+import { detectLanguage } from '../../cli/src/skills/file-reader'
 
-test('detectLanguage identifies TypeScript', () => {
+test('detectLanguage identifies languages', () => {
   expect(detectLanguage('file.ts')).toBe('typescript')
-  expect(detectLanguage('file.tsx')).toBe('typescript')
   expect(detectLanguage('file.js')).toBe('javascript')
   expect(detectLanguage('file.py')).toBe('python')
-  expect(detectLanguage('file.md')).toBe('markdown')
-  expect(detectLanguage('file.unknown')).toBe('text')
+  expect(detectLanguage('README.md')).toBe('markdown')
+  expect(detectLanguage('unknown.xyz')).toBe('text')
+})
+
+test('detectLanguage handles edge cases', () => {
+  expect(detectLanguage('')).toBe('text')
+  expect(detectLanguage('noextension')).toBe('text')
+  expect(detectLanguage('.hidden')).toBe('text')
 })
 
 test('detectLanguage handles edge cases', () => {

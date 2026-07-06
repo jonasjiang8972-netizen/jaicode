@@ -116,7 +116,7 @@ class AgentPool {
     for (const agent of this.agents.values()) {
       if (agent.status === 'running') {
         // Kill child process
-        try { agent.process?.kill() } catch {}
+        try { agent.process?.kill() } catch (e) { /* process already exited */ }
       }
     }
     this.agents.clear()
