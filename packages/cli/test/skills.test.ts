@@ -12,7 +12,7 @@ test('detectLanguage identifies TypeScript', () => {
 
 test('detectLanguage handles edge cases', () => {
   expect(detectLanguage('')).toBe('text')
-  expect(dictLanguage('noextension')).toBe('text')
+  expect(detectLanguage('noextension')).toBe('text')
   expect(detectLanguage('.hidden')).toBe('text')
 })
 

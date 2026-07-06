@@ -202,7 +202,7 @@ async function validateAPIKey(providerCfg) {
     try {
       const json = JSON.parse(text)
       errMsg = json.error?.message || json.message || errMsg
-    } catch {}
+    } catch (e) { /* file not found - will create new */ }
     return { success: false, error: errMsg }
   } catch (e) {
     return { success: false, error: e.message }
@@ -746,7 +746,7 @@ Always respond in the user's language preference.`,
         for (const file of fileBlocks) {
           const filePath = file.path
           let oldContent = ''
-          try { oldContent = fs.readFileSync(path.join(state.cwd, filePath), 'utf-8') } catch {}
+          try { oldContent = fs.readFileSync(path.join(state.cwd, filePath), 'utf-8') } catch (e) { /* file may not exist yet */ }
 
           if (file.format === 'block') {
             // Full file replacement
