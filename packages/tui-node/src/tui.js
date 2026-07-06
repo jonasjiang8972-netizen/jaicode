@@ -134,7 +134,7 @@ function detectProject() {
 function loadConfig() {
   const configPath = path.join(os.homedir(), '.jaicode', 'config.json')
   try { return JSON.parse(fs.readFileSync(configPath, 'utf-8')) }
-  catch { return { providers: {}, defaultProvider: 'anthropic' } }
+  catch (e) { console.error('[WARN] Config load failed, using defaults'); return { providers: {}, defaultProvider: 'anthropic' } }
 }
 
 function saveAPIKey(key) {
@@ -142,7 +142,7 @@ function saveAPIKey(key) {
   fs.mkdirSync(dir, { recursive: true })
   const configPath = path.join(dir, 'config.json')
   let cfg = {}
-  try { cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8')) } catch {}
+  try { cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8')) } catch (e) { console.error('[WARN] Config parse failed:', e.message) }
   if (!cfg.providers) cfg.providers = {}
   cfg.providers.anthropic = { model: 'claude-sonnet-4-20250514', apiKey: key, enabled: true }
   cfg.defaultProvider = 'anthropic'
