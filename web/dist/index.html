@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jaicode - AI 编程助手</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0f1a; color: #e6edf3; height: 100vh; display: flex; }
+        .sidebar { width: 260px; background: #0d1117; border-right: 1px solid #30363d; display: flex; flex-direction: column; }
+        .sidebar-header { padding: 16px; border-bottom: 1px solid #30363d; }
+        .sidebar-header h2 { color: #00B8D9; font-size: 18px; }
+        .sidebar-header span { color: #8b949e; font-size: 12px; }
+        .session-list { flex: 1; overflow-y: auto; padding: 8px; }
+        .session-item { padding: 10px 12px; border-radius: 6px; cursor: pointer; margin-bottom: 4px; }
+        .session-item:hover { background: #1a2332; }
+        .session-item.active { background: #1a2332; border: 1px solid #00B8D9; }
+        .main { flex: 1; display: flex; flex-direction: column; }
+        .chat-header { padding: 16px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
+        .chat-header h3 { font-weight: 500; }
+        .provider-badge { background: #1a2332; padding: 4px 10px; border-radius: 12px; font-size: 12px; color: #00E5C9; }
+        .messages { flex: 1; overflow-y: auto; padding: 20px; }
+        .message { margin-bottom: 20px; display: flex; gap: 12px; }
+        .message-avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+        .message.user .message-avatar { background: #00B8D9; }
+        .message.assistant .message-avatar { background: #00E5C9; }
+        .message-content { flex: 1; line-height: 1.6; }
+        .message-content pre { background: #1a2332; padding: 12px; border-radius: 6px; overflow-x: auto; }
+        .message-content code { background: #1a2332; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+        .input-area { padding: 16px; border-top: 1px solid #30363d; }
+        .input-container { display: flex; gap: 12px; align-items: flex-end; }
+        .input-box { flex: 1; background: #1a2332; border: 1px solid #30363d; border-radius: 8px; padding: 12px; min-height: 44px; max-height: 200px; resize: none; color: #e6edf3; outline: none; }
+        .input-box:focus { border-color: #00B8D9; }
+        .btn { padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; }
+        .btn-primary { background: #00B8D9; color: #0a0f1a; }
+        .btn-primary:hover { background: #00E5C9; }
+        .btn-ghost { background: transparent; border: 1px solid #30363d; color: #8b949e; }
+        .btn-ghost:hover { border-color: #00B8D9; color: #00B8D9; }
+        .image-preview { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+        .image-preview img { width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid #30363d; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h2>⬡ Jaicode</h2>
+            <span>v0.20.0</span>
+        </div>
+        <div class="session-list">
+            <div class="session-item active">新对话</div>
+        </div>
+    </div>
+    <div class="main">
+        <div class="chat-header">
+            <h3>对话</h3>
+            <span class="provider-badge" id="providerBadge">Anthropic</span>
+        </div>
+        <div class="messages" id="messages"></div>
+        <div class="input-area">
+            <div class="image-preview" id="imagePreview"></div>
+            <div class="input-container">
+                <textarea class="input-box" id="input" placeholder="输入消息... (Enter 发送, Shift+Enter 换行)" rows="1"></textarea>
+                <button class="btn btn-ghost" onclick="uploadImage()">📎</button>
+                <button class="btn btn-primary" onclick="sendMessage()">发送</button>
+            </div>
+        </div>
+    </div>
+
+    <input type="file" id="fileInput" accept="image/*" style="display:none" onchange="handleFile(event)">
+    <script>
+        const messages = [];
+        let currentSession = { id: 'new', messages: [] };
+        let abortController = null;
+
+        async function sendMessage() {
+            const input = document.getElementById('input');
+            const text = input.value.trim();
+            if (!text) return;
+
+            appendMessage('user', text);
+            input.value = '';
+
+            abortController = new AbortController();
+            const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ message: text, mode: 'code' }),
+                signal: abortController.signal,
+            });
+
+            if (!response.ok) {
+                appendMessage('assistant', '❌ 请求失败: ' + response.status);
+                return;
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let assistantMsg = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                const text = decoder.decode(value);
+                const lines = text.split('\n');
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const json = JSON.parse(line.slice(6));
+                            if (json.content) {
+                                assistantMsg += json.content;
+                                updateLastMessage(assistantMsg);
+                            }
+                        } catch {}
+                    }
+                }
+            }
+        }
+
+        function appendMessage(role, content) {
+            const container = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            div.innerHTML = `<div class="message-avatar">${role === 'user' ? '❯' : '⬡'}</div><div class="message-content">${escapeHTML(content)}</div>`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function updateLastMessage(content) {
+            const container = document.getElementById('messages');
+            const lastMsg = container.lastElementChild;
+            if (lastMsg && lastMsg.classList.contains('assistant')) {
+                lastMsg.querySelector('.message-content').textContent = content;
+            } else {
+                appendMessage('assistant', content);
+            }
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function escapeHTML(s) {
+            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function uploadImage() {
+            document.getElementById('fileInput').click();
+        }
+
+        async function handleFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // Compress image
+            const compressed = await compressImage(file);
+
+            const formData = new FormData();
+            formData.append('image', compressed);
+
+            const resp = await fetch('/api/upload', {
+                method: 'POST',
+                credentials: 'include',
+                body: formData,
+            });
+
+            if (resp.ok) {
+                const data = await resp.json();
+                showImagePreview(data.id, URL.createObjectURL(compressed));
+            }
+        }
+
+        async function compressImage(file) {
+            // Use canvas for compression
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    let w = img.width, h = img.height;
+                    if (w > 1024) { h = h * 1024 / w; w = 1024; }
+                    canvas.width = w;
+                    canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.8);
+                };
+                img.src = URL.createObjectURL(file);
+            });
+        }
+
+        function showImagePreview(id, url) {
+            const preview = document.getElementById('imagePreview');
+            const img = document.createElement('img');
+            img.src = url;
+            preview.appendChild(img);
+        }
+
+        document.getElementById('input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>

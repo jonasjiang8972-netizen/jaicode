@@ -23,6 +23,11 @@ dist/
 *.dll
 *.so
 *.dylib
+backend-go/bin/
+jaicode-macos
+jaicode-linux
+backend-go/jaicode-desktop
+backend-go/web/dist
 
 # Editor
 .vscode/
@@ -33,10 +38,6 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Pre-compiled binaries
-backend-go/bin/
-jaicode-desktop
-
 # Reference repo (read-only)
 .kilo/kilocode-ref/
 
@@ -46,3 +47,6 @@ logs/
 
 # Tauri
 src-tauri/target/
+
+# macOS app
+packages/tui/dist/
